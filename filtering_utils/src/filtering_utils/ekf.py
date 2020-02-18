@@ -43,11 +43,14 @@ class EKF:
 
     def save_before_close(self,signum, free):
         with open('ground_truth.pickle', 'wb') as file:
-            pickle.dump(self.ground_truth_state_history,file)
+            pass
+            #pickle.dump(self.ground_truth_state_history,file)
         with open('states.pickle','wb') as file:
-            pickle.dump(self.state_data_history,file)
+            pass
+            #pickle.dump(self.state_data_history,file)
         with open('cov_params.pickle','wb') as file:
-            pickle.dump(self.cov_parameters_history,file)
+            pass
+            #pickle.dump(self.cov_parameters_history,file)
 
     def initialize_state_vector(self, msg): # Function for initializing state_vector
         #print("initialize state", self.state_vector.shape)
