@@ -5,10 +5,15 @@ from tf.transformations import euler_from_quaternion
 from tf.transformations import quaternion_from_euler
 from nav_msgs.msg import Odometry
 import rospy
+import pickle
 import signal
 #import pdb
 #import warnings
 #warnings.filterwarnings('error')
+
+# Hello testing testing -Roope
+# Testing continues -Roope
+# Testing -Roope
 
 class EKF:
     def __init__(self, state_vector_size, control_size, measurement_size):
@@ -31,14 +36,22 @@ class EKF:
         from nav_msgs.msg import Odometry
         self.gt = rospy.Subscriber('base_pose_ground_truth', Odometry, self.initialize_state_vector) # Initializing state_vector with ground truth
         #
-        #self.state_data_history = []
-        #self.ground_truth_state_history = []
+        self.state_data_history = []
+        self.ground_truth_state_history = []
         self.odometry_history = []
-        signal.signal(signal.SIGINT, self.exit_gracefully)
-        signal.signal(signal.SIGTERM, self.exit_gracefully)
+        self.count = 400
+        self.saved = False
+        self.cov_parameters_history = []
+        signal.signal(signal.SIGINT, self.save_before_close)
+        signal.signal(signal.SIGTERM, self.save_before_close)
 
-    def exit_gracefully(self,signum,frame):
-        print("PROGRAM WAS TERMINATED!!!")
+    def save_before_close(self,signum, free):
+        with open('ground_truth.pickle', 'wb') as file:
+            pickle.dump(self.ground_truth_state_history,file)
+        with open('states.pickle','wb') as file:
+            pickle.dump(self.state_data_history,file)
+        with open('cov_params.pickle','wb') as file:
+            pickle.dump(self.cov_parameters_history,file)
 
     def initialize_state_vector(self, msg): # Function for initializing state_vector
         #print("initialize state", self.state_vector.shape)
@@ -70,12 +83,10 @@ class EKF:
         self.control = np.array(([v,w]))
         #
         # determine q-matrix aka process noise
-        self.q = np.array(([0.04, 0],[0,0.001])) # FOR TEST PURPOSES
+        self.q = np.array(([0.1, 0],[0,.1])) #FIXME FOR TEST PURPOSES [0.04, 0],[0,0.001]
         #
         self.propagate_state()
         self.calculate_cov()
-        #
-        self.odometry_history.append([v,w])
 
     def update(self, msg): #
 
@@ -83,6 +94,7 @@ class EKF:
         pos_x = msg.pose.position.x
         pos_y = msg.pose.position.y
         theta = self.wrap_to_pi(euler_from_quaternion([msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w])[2])
+        #print(quaternion_from_euler(0,0,theta))
         self.observation_jacobian_state_vector()
         
         floor = self.cov_matrix.dot(self.obs_j_state.transpose()).astype(np.float32)
@@ -98,6 +110,7 @@ class EKF:
         self.state_vector = self.state_vector + self.K.dot(tempterm)
         self.cov_matrix = (np.eye(3) - self.K.dot(self.obs_j_state)).dot(self.cov_matrix)
         print(self.state_vector)
+
 
 
 
@@ -220,3 +233,27 @@ class EKF:
 
     def wrap_to_pi(self,angle):
         return (angle + np.pi) % (2 * np.pi) - np.pi
+
+    def save_data_for_analysis(self, msg):
+        gtx = msg.pose.pose.position.x
+        gty = msg.pose.pose.position.y
+        gt_theta = self.wrap_to_pi(euler_from_quaternion([msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z, msg.pose.pose.orientation.w])[2])
+        #
+        ptx = self.state_vector[0][0]
+        pty = self.state_vector[1][0]
+        pt_theta = self.state_vector[2][0]
+        #
+        covx = self.cov_matrix[0][0]
+        covy = self.cov_matrix[1][1]
+        cov_theta = self.cov_matrix[2][2]
+        self.state_data_history.append([ptx,pty,pt_theta])
+        self.ground_truth_state_history.append([gtx,gty,gt_theta])
+        self.cov_parameters_history.append([covx,covy,cov_theta])
+        '''elif len(self.ground_truth_state_history) == self.count and self.saved == False:
+            with open('ground_truth.pickle', 'wb') as file:
+                pickle.dump(self.ground_truth_state_history,file)
+            with open('states.pickle','wb') as file:
+                pickle.dump(self.state_data_history,file)
+            self.saved = True
+            print("All data saved")'''
+
