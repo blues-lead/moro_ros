@@ -25,9 +25,6 @@ class EKF:
         #
         self.control = np.zeros((2,1))
         self.Z = np.zeros((2,1))
-        #self.v_sigma = [] # for sampling sigma
-        #self.w_sigma = [] # for sampling sigma
-        self.prev_time_stamp = 0 # keeping the last time stamp
         #self.prev_state = np.array((3,1))
         from nav_msgs.msg import Odometry
         self.gt = rospy.Subscriber('base_pose_ground_truth', Odometry, self.initialize_state_vector) # Initializing state_vector with ground truth
@@ -53,30 +50,26 @@ class EKF:
             #pickle.dump(self.cov_parameters_history,file)
 
     def initialize_state_vector(self, msg): # Function for initializing state_vector
-        #print("initialize state", self.state_vector.shape)
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
         theta = euler_from_quaternion([msg.pose.pose.orientation.x,msg.pose.pose.orientation.y,msg.pose.pose.orientation.z,msg.pose.pose.orientation.w])[2]
         self.state_vector[0] = x
         self.state_vector[1] = y
         self.state_vector[2] = self.wrap_to_pi(theta)
+        # Initialization landmarks with zeros
+        #print(self.state_vector)   
+        #
         self.prev_time_stamp = msg.header.stamp.secs + msg.header.stamp.nsecs*(10**-9)
         self.gt.unregister() # unregister subscriber. Function is implemented only once.
 
     def predict(self, odometry): # odometry added by me
-        #TODO determine q-matrix
-        #print('predict state', self.state_vector.shape)
 
-        # Get v,w from odometry msg
         w = odometry.twist.twist.angular.z
         v = odometry.twist.twist.linear.x
         self.dt = (odometry.header.stamp.secs + odometry.header.stamp.nsecs*(10**-9))-self.prev_time_stamp
-        #print(self.dt)
-        #pdb.set_trace()
         #
         # get timestamp
         self.prev_time_stamp = odometry.header.stamp.secs + odometry.header.stamp.nsecs*(10**-9)
-        #print('Seconds gone is', self.dt)
         #
         # form internal control vector
         self.control = np.array(([v,w]))
@@ -93,7 +86,6 @@ class EKF:
         pos_x = msg.pose.position.x
         pos_y = msg.pose.position.y
         theta = self.wrap_to_pi(euler_from_quaternion([msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w])[2])
-        #print(quaternion_from_euler(0,0,theta))
         self.observation_jacobian_state_vector()
         
         floor = self.cov_matrix.dot(self.obs_j_state.transpose()).astype(np.float32)
@@ -108,12 +100,13 @@ class EKF:
        
         self.state_vector = self.state_vector + self.K.dot(tempterm)
         self.cov_matrix = (np.eye(3) - self.K.dot(self.obs_j_state)).dot(self.cov_matrix)
-        print(self.state_vector)
+        #print(self.state_vector)
 
 
 
 
     def propagate_state(self):
+        #print("Propagate state entered")
         if self.control[1] != 0:
             term = self.control[0]/self.control[1]
             x = self.state_vector[0] - term*np.sin(self.state_vector[2])+ term*np.sin(self.state_vector[2]+self.control[1]*self.dt)
@@ -123,11 +116,20 @@ class EKF:
 
         else:
             term = self.control[0]
-            x = self.state_vector[0] + self.control[0]*np.cos(self.state_vector[2])*self.dt #self.control[0]*self.dt
-            y = self.state_vector[1] + self.control[0]*np.sin(self.state_vector[2])*self.dt #self.control[0]*self.dt
+            x = self.state_vector[0] + self.control[0]*np.cos(self.state_vector[2])*self.dt
+            y = self.state_vector[1] + self.control[0]*np.sin(self.state_vector[2])*self.dt
             theta = self.state_vector[2]
+        # Add landmarks information
+        #self.state_vector = np.array([x,y,theta])
+        self.state_vector[0][0] = x
+        self.state_vector[1][0] = y
+        self.state_vector[2][0] = theta
+        #print(self.state_vector)
+        for i in range(3,13):
+            self.state_vector[i][0] = self.state_vector[i][0] # Possibly ambiguous
+        #
             
-        self.state_vector = np.array([x,y,theta])
+        
         
 
 
@@ -139,7 +141,6 @@ class EKF:
         py = self.cur_id[1]
 
         r = np.sqrt((px-x)**2 + (py-y)**2)      #Distance
-        #phi = np.arctan2(py-y, px-x) - theta    #Bearing
         phi = np.arctan((py - y)/(px - x)) - theta 
 
         self.Z[0] = r
@@ -182,7 +183,18 @@ class EKF:
         else:
             row1term3 = 0
             row2term3 = 0
-        self.motion_j_state = np.array(([1,0,row1term3],[0,1,row2term3],[0,0,1]))
+        self.motion_j_state = np.array([[1,0,row1term3],[0,1,row2term3],[0,0,1]])
+        #print(self.motion_j_state)
+        # SLAM
+        jtemp1 = np.zeros((10,3)) # underpart of jacobian
+        jtemp2 = np.zeros((3,10)) # right-hand part of jacobina
+        jtemp3 = np.eye(10) # || - || - ||
+        jtemp = np.concatenate((jtemp2,jtemp3), axis=0) # right-hand part of jacobian concatenated
+        #print(jtemp)
+        self.motion_j_state = np.concatenate((self.motion_j_state,jtemp1),axis=0)
+        self.motion_j_state = np.concatenate((self.motion_j_state,jtemp),axis=1)
+        #print(self.motion_j_state)
+        # SLAM
 
     def motion_jacobian_noise_components(self):
         if self.control[1] != 0: # if angular velocity is not zero
@@ -217,6 +229,12 @@ class EKF:
             row3term1 = 0
             row3term2 = 0
         self.motion_j_noise = np.array(([row1term1, row1term2],[row2term1,row2term2],[row3term1,row3term2]))
+        # SLAM
+        temp = np.zeros((10,2))
+        self.motion_j_noise = np.concatenate((self.motion_j_noise, temp), axis = 0)
+        # print("Noise components are:")
+        # print(self.motion_j_noise)
+        # SLAM
 
     def observation_jacobian_state_vector(self):
         row1term1 = (self.state_vector[0] - self.cur_id[0])/np.sqrt((self.state_vector[0] - self.cur_id[0])**2 + (self.state_vector[1] - self.cur_id[1])**2) #checked
