@@ -24,16 +24,18 @@ class EKF:
         self.beacons = {1:[7.3, 3.0], 2:[1,1],3:[9,9],4:[1,8],5:[5.8,8]}
         #
         self.control = np.zeros((2,1))
-        self.Z = np.zeros((2,1))
+        self.Z = np.zeros((12,1))
         #self.prev_state = np.array((3,1))
         from nav_msgs.msg import Odometry
         self.gt = rospy.Subscriber('base_pose_ground_truth', Odometry, self.initialize_state_vector) # Initializing state_vector with ground truth
         #
+        self.prev_time_stamp = 0
         self.state_data_history = []
         self.ground_truth_state_history = []
         self.odometry_history = []
         self.count = 400
         self.saved = False
+        self.cur_id = 1 # id of current landmark
         self.cov_parameters_history = []
         signal.signal(signal.SIGINT, self.save_before_close)
         signal.signal(signal.SIGTERM, self.save_before_close)
@@ -81,12 +83,14 @@ class EKF:
         self.calculate_cov()
 
     def update(self, msg): #
-
-        self.cur_id = self.beacons[msg.ids[0]] # coordinates of current transmitter
+        self.cur_id = msg.ids[0]
+        self.lm_coordinate = self.beacons[msg.ids[0]] # coordinates of current transmitter
         pos_x = msg.pose.position.x
         pos_y = msg.pose.position.y
         theta = self.wrap_to_pi(euler_from_quaternion([msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w])[2])
         self.observation_jacobian_state_vector()
+        print("shape of cov:", self.cov_matrix.shape)
+        print("shape of jstate:", self.obs_j_state.transpose().shape)
         
         floor = self.cov_matrix.dot(self.obs_j_state.transpose()).astype(np.float32)
         
@@ -137,8 +141,8 @@ class EKF:
         x = state[0]
         y = state[1]
         theta = state[2]
-        px = self.cur_id[0]
-        py = self.cur_id[1]
+        px = self.lm_coordinate[0]
+        py = self.lm_coordinate[1]
 
         r = np.sqrt((px-x)**2 + (py-y)**2)      #Distance
         phi = np.arctan((py - y)/(px - x)) - theta 
@@ -237,13 +241,17 @@ class EKF:
         # SLAM
 
     def observation_jacobian_state_vector(self):
-        row1term1 = (self.state_vector[0] - self.cur_id[0])/np.sqrt((self.state_vector[0] - self.cur_id[0])**2 + (self.state_vector[1] - self.cur_id[1])**2) #checked
-        row1term2 = (self.state_vector[1] - self.cur_id[1])/np.sqrt((self.state_vector[0] - self.cur_id[0])**2 + (self.state_vector[1] - self.cur_id[1])**2) #checked
+        row1term1 = (self.state_vector[0] - self.lm_coordinate[0])/np.sqrt((self.state_vector[0] - self.lm_coordinate[0])**2 + (self.state_vector[1] - self.lm_coordinate[1])**2) #checked
+        row1term2 = (self.state_vector[1] - self.lm_coordinate[1])/np.sqrt((self.state_vector[0] - self.lm_coordinate[0])**2 + (self.state_vector[1] - self.lm_coordinate[1])**2) #checked
         row1term3 = 0
-        row2term1 = (self.cur_id[1] - self.state_vector[1]) / ((self.cur_id[0] - self.state_vector[0])**2 + (self.cur_id[1] - self.state_vector[1])**2) #checked
-        row2term2 = -1/((((self.cur_id[1]-self.state_vector[1])**2)/(self.cur_id[0]-self.state_vector[0]))+(self.cur_id[0]- self.state_vector[0])) #checked
+        row2term1 = (self.lm_coordinate[1] - self.state_vector[1]) / ((self.lm_coordinate[0] - self.state_vector[0])**2 + (self.lm_coordinate[1] - self.state_vector[1])**2) #checked
+        row2term2 = -1/((((self.lm_coordinate[1]-self.state_vector[1])**2)/(self.lm_coordinate[0]-self.state_vector[0]))+(self.lm_coordinate[0]- self.state_vector[0])) #checked
         row2term3 = -1
         self.obs_j_state = np.array(([row1term1, row1term2, row1term3],[row2term1,row2term2,row2term3]))
+        # SLAM #FIXME test
+        temp = np.zeros((12,1))
+        self.obs_j_state = np.concatenate((self.obs_j_state, temp),axis=0)
+        # SLAM
 
     def print_initials(self):
         pass
