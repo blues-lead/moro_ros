@@ -7,7 +7,7 @@ from nav_msgs.msg import Odometry
 import rospy
 import pickle
 import signal
-#import pdb
+import pdb
 #import warnings
 #warnings.filterwarnings('error')
 
@@ -17,113 +17,139 @@ class EKF:
         self.cov_matrix = 1000. * np.identity(state_vector_size)
         self.q = np.zeros((control_size, control_size))
         self.R = np.zeros((measurement_size, measurement_size))
-        self.R = np.diag((0.1, 0.01))
+        self.R = np.diag(([0.1, 0.01]))
         self.motion_j_state = np.zeros((state_vector_size, state_vector_size))
         self.motion_j_noise = np.zeros((state_vector_size, control_size))
         self.obs_j_state = np.zeros((measurement_size, state_vector_size))
         self.Q = np.zeros((state_vector_size, state_vector_size))
         self.beacons = {1:[7.3, 3.0], 2:[1,1],3:[9,9],4:[1,8],5:[5.8,8]}
-        self.observed_beacons = {}
-
+        self.new_meas = np.empty((1,3))
         #
         self.control = np.zeros((2,1))
-        self.Z = np.zeros((12,1))
+        self.Z = np.zeros((2,1))
+        #self.v_sigma = [] # for sampling sigma
+        #self.w_sigma = [] # for sampling sigma
+        self.prev_time_stamp = 0 # keeping the last time stamp
         #self.prev_state = np.array((3,1))
         from nav_msgs.msg import Odometry
         self.gt = rospy.Subscriber('base_pose_ground_truth', Odometry, self.initialize_state_vector) # Initializing state_vector with ground truth
         #
-        self.prev_time_stamp = 0
         self.state_data_history = []
         self.ground_truth_state_history = []
         self.odometry_history = []
         self.count = 400
-        self.saved = False
-        self.cur_id = 1 # id of current landmark
+        #self.saved = False
+        self.initialized = False
         self.cov_parameters_history = []
         signal.signal(signal.SIGINT, self.save_before_close)
         signal.signal(signal.SIGTERM, self.save_before_close)
 
     def save_before_close(self,signum, free):
+        #pass
         with open('ground_truth.pickle', 'wb') as file:
-            pass
-            #pickle.dump(self.ground_truth_state_history,file)
+            pickle.dump(self.ground_truth_state_history,file)
         with open('states.pickle','wb') as file:
-            pass
-            #pickle.dump(self.state_data_history,file)
+            pickle.dump(self.state_data_history,file)
         with open('cov_params.pickle','wb') as file:
-            pass
-            #pickle.dump(self.cov_parameters_history,file)
+            pickle.dump(self.cov_parameters_history,file)
 
     def initialize_state_vector(self, msg): # Function for initializing state_vector
+        #print("initialize state", self.state_vector.shape)
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
         theta = euler_from_quaternion([msg.pose.pose.orientation.x,msg.pose.pose.orientation.y,msg.pose.pose.orientation.z,msg.pose.pose.orientation.w])[2]
         self.state_vector[0] = x
         self.state_vector[1] = y
         self.state_vector[2] = self.wrap_to_pi(theta)
-        # Initialization landmarks with zeros
-        #print(self.state_vector)   
-        #
+        #print("Inittial state",self.state_vector[0],self.state_vector[1], self.state_vector[2])
         self.prev_time_stamp = msg.header.stamp.secs + msg.header.stamp.nsecs*(10**-9)
         self.gt.unregister() # unregister subscriber. Function is implemented only once.
+        self.initialized = True
 
     def predict(self, odometry): # odometry added by me
+        #TODO determine q-matrix
+        #print('predict state', self.state_vector.shape)
 
+        # Get v,w from odometry msg
         w = odometry.twist.twist.angular.z
         v = odometry.twist.twist.linear.x
         self.dt = (odometry.header.stamp.secs + odometry.header.stamp.nsecs*(10**-9))-self.prev_time_stamp
+        #print(self.dt)
+        #pdb.set_trace()
         #
         # get timestamp
         self.prev_time_stamp = odometry.header.stamp.secs + odometry.header.stamp.nsecs*(10**-9)
+        #print('Seconds gone is', self.dt)
         #
         # form internal control vector
         self.control = np.array(([v,w]))
         #
         # determine q-matrix aka process noise
-        self.q = np.array(([0.1, 0],[0,.1])) #FIXME FOR TEST PURPOSES [0.04, 0],[0,0.001]
+        self.q = np.array(([0.4**2, 0],[0,.05**2])) #FIXME FOR TEST PURPOSES [0.04, 0],[0,0.001]
         #
         self.propagate_state()
         self.calculate_cov()
+        print(self.state_vector)
 
     def update(self, msg): #
-        self.cur_id = msg.ids[0] # coordinates of current transmitter
+        self.cur_id = self.beacons[msg.ids[0]] # coordinates of current transmitter
         
         # landmark position in robot frame
         pos_x = msg.pose.position.x
         pos_y = msg.pose.position.y
+        # test
+        #rng = np.sqrt(pos_x**2 + pos_y**2)
         rng = np.sqrt(pos_x**2 + pos_y**2)
+        # test
+        #bearing
         theta = self.wrap_to_pi(euler_from_quaternion([msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w])[2])
         theta = self.process_angle(pos_x, pos_y, theta)
         self.observation_jacobian_state_vector()
-        
-        #print(self.state_vector.shape)
+        #nominator
         floor = self.cov_matrix.dot(self.obs_j_state.transpose()).astype(np.float32)
         
         #denominator
+        # obs_j_state 2x3, cov_matrix 3x3, obs_j_state 3x2
         bottom = (self.obs_j_state.dot(self.cov_matrix).dot(self.obs_j_state.transpose()) + self.R).astype(np.float32) # palce self.R diag(0.1 0.01)
+        #bottom = (self.obs_j_state.dot(self.cov_matrix).dot(self.obs_j_state.transpose()) + 0.01).astype(np.float32) # WAS 0,01
 
-        self.K = floor.dot(np.linalg.inv(bottom)) # 
+        self.K = floor.dot(np.linalg.inv(bottom)) # K is 3x2
+        #self.K = floor*(1/bottom) # K is 3x2
 
         expected_meas = self.measurement_model(self.state_vector)
         new_meas = np.array(([rng, theta]))
-        innovation = (([new_meas[0] - expected_meas[0], new_meas[1] - expected_meas[1]]))
+        #expected_meas = self.measurement_model(self.state_vector)[0]
+
+        #new_meas = self.measurement_model([pos_x, pos_y, theta]) # THAT WORKS BETTER SO FAR
+        #tempterm = np.array(([rng - expected_meas[0]])) #meas_state[2] - expected_meas[1]]))#,theta - expected_meas[1]] # 
+        innovation = np.array(([new_meas[0] - expected_meas[0], new_meas[1] - expected_meas[1]]))
+        #innovation = new_meas.T - expected_meas.T
        
+        #self.state_vector = self.state_vector + self.K.dot(tempterm)
+        #print("Shape is:", self.K.shape)
         self.state_vector = self.state_vector + self.K.dot(innovation)
-        self.cov_matrix = (np.eye(13) - self.K.dot(self.obs_j_state)).dot(self.cov_matrix)
-        #print("State vector is:")
-        #print(self.state_vector)
+        self.cov_matrix = (np.eye(3) - self.K.dot(self.obs_j_state)).dot(self.cov_matrix)
+        # if self.cov_matrix[0][0] > 50:
+        #     pdb.set_trace()
+        #self.cov_matrix = self.K*self.obs_j_state
+        print("State vector is:")
+        print(self.state_vector)
+        #print(self.cov_matrix)
 
     def process_angle(self,x,y,a):
         rot_matrix = np.array(([np.cos(a), -np.sin(a)],[np.sin(a), np.cos(a)]))
         xy = np.array([x, y]).T
         new_xy = rot_matrix.transpose().dot(xy)
         bearing = np.arctan2(new_xy[1], new_xy[0]) + a
+        #self.new_meas[0] = new_xy[0]
+        #self.new_meas[1] = new_xy[1]
+        #self.new_meas[2] = bearing
+        self.new_meas = np.array(([new_xy[0], new_xy[1], bearing]))
         return bearing
 
 
 
     def propagate_state(self):
-        #print("Propagate state entered")
         if self.control[1] != 0:
             term = self.control[0]/self.control[1]
             x = self.state_vector[0] - term*np.sin(self.state_vector[2])+ term*np.sin(self.state_vector[2]+self.control[1]*self.dt)
@@ -133,20 +159,11 @@ class EKF:
 
         else:
             term = self.control[0]
-            x = self.state_vector[0] + self.control[0]*np.cos(self.state_vector[2])*self.dt
-            y = self.state_vector[1] + self.control[0]*np.sin(self.state_vector[2])*self.dt
-            theta = self.state_vector[2]
-        # Add landmarks information
-        #self.state_vector = np.array([x,y,theta])
-        self.state_vector[0][0] = x
-        self.state_vector[1][0] = y
-        self.state_vector[2][0] = theta
-        #print(self.state_vector)
-        for i in range(3,13):
-            self.state_vector[i][0] = self.state_vector[i][0] # Possibly ambiguous
-        #
+            x = self.state_vector[0] + self.control[0]*np.cos(self.state_vector[2])*self.dt #self.control[0]*self.dt
+            y = self.state_vector[1] + self.control[0]*np.sin(self.state_vector[2])*self.dt #self.control[0]*self.dt
+            theta = self.wrap_to_pi(self.state_vector[2])
             
-        
+        self.state_vector = np.array([x,y,theta])
         
 
 
@@ -158,10 +175,10 @@ class EKF:
         py = self.cur_id[1]
 
         r = np.sqrt((px-x)**2 + (py-y)**2)      #Distance
-        phi = np.arctan((py - y)/(px - x)) - theta 
+        phi = np.arctan2(py-y, px-x) - theta    #Bearing
 
         self.Z[0] = r
-        self.Z[1] = phi 
+        self.Z[1] = self.wrap_to_pi(phi) #FIXME added for example
         return self.Z
 
 
@@ -185,13 +202,21 @@ class EKF:
             dw = 0
             row1term1 = 1
             row1term2 = 0
-            row1term3 = row1term3 = (np.cos(theta + dt*(dw + w))*(dv+v))/(dw + w) \
+            row1term3 = (np.cos(theta + dt*(dw + w))*(dv+v))/(dw + w) \
                 - (np.cos(theta)*(dv+v))/(dw + w)
+            #TEST
+            row1term3 = (self.control[0]/self.control[1])*np.cos(self.state_vector[2]) \
+                - (self.control[0]/self.control[1])*np.cos(self.state_vector[2] * self.control[1]*self.dt)
+            #TEST
 
             row2term1 = 0
             row2term2 = 1
             row2term3 = (np.sin(theta + dt*(dw + w))*(dv+v))/(dw + w) \
                 - (np.sin(theta)*(dv+v))/(dw + w)
+            #TEST
+            row2term3 = (self.control[0]/self.control[1])*np.sin(self.state_vector[2]) \
+                - (self.control[0]/self.control[1])*np.sin(self.state_vector[2] * self.control[1]*self.dt)
+            #TEST
 
             row3term1 = 0
             row3term2 = 0
@@ -200,18 +225,7 @@ class EKF:
         else:
             row1term3 = 0
             row2term3 = 0
-        self.motion_j_state = np.array([[1,0,row1term3],[0,1,row2term3],[0,0,1]])
-        #print(self.motion_j_state)
-        # SLAM
-        jtemp1 = np.zeros((10,3)) # underpart of jacobian
-        jtemp2 = np.zeros((3,10)) # right-hand part of jacobina
-        jtemp3 = np.eye(10) # || - || - ||
-        jtemp = np.concatenate((jtemp2,jtemp3), axis=0) # right-hand part of jacobian concatenated
-        #print(jtemp)
-        self.motion_j_state = np.concatenate((self.motion_j_state,jtemp1),axis=0)
-        self.motion_j_state = np.concatenate((self.motion_j_state,jtemp),axis=1)
-        #print(self.motion_j_state)
-        # SLAM
+        self.motion_j_state = np.array(([1,0,row1term3],[0,1,row2term3],[0,0,1]))
 
     def motion_jacobian_noise_components(self):
         if self.control[1] != 0: # if angular velocity is not zero
@@ -246,12 +260,6 @@ class EKF:
             row3term1 = 0
             row3term2 = 0
         self.motion_j_noise = np.array(([row1term1, row1term2],[row2term1,row2term2],[row3term1,row3term2]))
-        # SLAM
-        temp = np.zeros((10,2))
-        self.motion_j_noise = np.concatenate((self.motion_j_noise, temp), axis = 0)
-        # print("Noise components are:")
-        # print(self.motion_j_noise)
-        # SLAM
 
     def observation_jacobian_state_vector(self):
         row1term1 = (self.state_vector[0] - self.cur_id[0])/np.sqrt((self.state_vector[0] - self.cur_id[0])**2 + (self.state_vector[1] - self.cur_id[1])**2) #checked
@@ -260,11 +268,8 @@ class EKF:
         row2term1 = (self.cur_id[1] - self.state_vector[1]) / ((self.cur_id[0] - self.state_vector[0])**2 + (self.cur_id[1] - self.state_vector[1])**2) #checked
         row2term2 = -1/((((self.cur_id[1]-self.state_vector[1])**2)/(self.cur_id[0]-self.state_vector[0]))+(self.cur_id[0]- self.state_vector[0])) #checked
         row2term3 = -1
-        self.obs_j_state = np.array(([row1term1, row1term2, row1term3],[row2term1,row2term2,row2term3]))
-        # SLAM #FIXME test
-        temp = np.zeros((2,10))
-        self.obs_j_state = np.concatenate((self.obs_j_state, temp),axis=1)
-        # SLAM
+        jacobian = [[row1term1, row1term2, row1term3],[row2term1, row2term2, row2term3]] #!
+        self.obs_j_state = np.array(jacobian)
 
     def print_initials(self):
         pass
@@ -281,17 +286,10 @@ class EKF:
         pty = self.state_vector[1][0]
         pt_theta = self.state_vector[2][0]
         #
-        covx = self.cov_matrix[0][0]
-        covy = self.cov_matrix[1][1]
-        cov_theta = self.cov_matrix[2][2]
+        covx =  np.sqrt(self.cov_matrix[0][0])
+        covy = np.sqrt(self.cov_matrix[1][1])
+        cov_theta = np.sqrt(self.cov_matrix[2][2])
         self.state_data_history.append([ptx,pty,pt_theta])
         self.ground_truth_state_history.append([gtx,gty,gt_theta])
         self.cov_parameters_history.append([covx,covy,cov_theta])
-        '''elif len(self.ground_truth_state_history) == self.count and self.saved == False:
-            with open('ground_truth.pickle', 'wb') as file:
-                pickle.dump(self.ground_truth_state_history,file)
-            with open('states.pickle','wb') as file:
-                pickle.dump(self.state_data_history,file)
-            self.saved = True
-            print("All data saved")'''
-
+        
