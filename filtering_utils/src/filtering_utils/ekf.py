@@ -16,6 +16,7 @@ class EKF:
         self.state_vector = np.zeros((state_vector_size, 1))
         self.cov_matrix = 1000. * np.identity(state_vector_size)
         self.q = np.zeros((control_size, control_size))
+        self.q = np.diag(([0.4**2, 0, .05**2,0,0,0,0,0,0,0,0,0,0]))
         self.R = np.zeros((measurement_size, measurement_size))
         self.R = np.diag(([0.1, 0.01]))
         self.motion_j_state = np.zeros((state_vector_size, state_vector_size))
@@ -85,7 +86,7 @@ class EKF:
         self.control = np.array(([v,w]))
         #
         # determine q-matrix aka process noise
-        self.q = np.array(([0.4**2, 0],[0,.05**2])) #FIXME FOR TEST PURPOSES [0.04, 0],[0,0.001]
+        #self.q = np.array(([0.4**2, 0],[0,.05**2])) #FIXME FOR TEST PURPOSES [0.04, 0],[0,0.001]
         #
         self.propagate_state()
         self.calculate_cov()
@@ -106,6 +107,7 @@ class EKF:
         theta = self.process_angle(pos_x, pos_y, theta)
         self.observation_jacobian_state_vector()
         #nominator
+        print(self.cov_matrix.shape)
         floor = self.cov_matrix.dot(self.obs_j_state.transpose()).astype(np.float32)
         
         #denominator
@@ -128,7 +130,7 @@ class EKF:
         #self.state_vector = self.state_vector + self.K.dot(tempterm)
         #print("Shape is:", self.K.shape)
         self.state_vector = self.state_vector + self.K.dot(innovation)
-        self.cov_matrix = (np.eye(3) - self.K.dot(self.obs_j_state)).dot(self.cov_matrix)
+        self.cov_matrix = (np.eye(13) - self.K.dot(self.obs_j_state)).dot(self.cov_matrix)
         # if self.cov_matrix[0][0] > 50:
         #     pdb.set_trace()
         #self.cov_matrix = self.K*self.obs_j_state
@@ -141,9 +143,6 @@ class EKF:
         xy = np.array([x, y]).T
         new_xy = rot_matrix.transpose().dot(xy)
         bearing = np.arctan2(new_xy[1], new_xy[0]) + a
-        #self.new_meas[0] = new_xy[0]
-        #self.new_meas[1] = new_xy[1]
-        #self.new_meas[2] = bearing
         self.new_meas = np.array(([new_xy[0], new_xy[1], bearing]))
         return bearing
 
@@ -225,7 +224,12 @@ class EKF:
         else:
             row1term3 = 0
             row2term3 = 0
-        self.motion_j_state = np.array(([1,0,row1term3],[0,1,row2term3],[0,0,1]))
+        temp = np.concatenate((np.zeros((3,10)), np.eye(10)), axis=0)
+        base_jacobian = np.array(([1,0,row1term3],[0,1,row2term3],[0,0,1]))
+        temp2 = np.concatenate((base_jacobian,np.zeros((10,3))))
+        self.motion_j_state = np.concatenate((temp2, temp), axis=1)
+        #print(self.motion_j_state.shape)
+        #self.motion_j_state = np.array(([1,0,row1term3],[0,1,row2term3],[0,0,1]))
 
     def motion_jacobian_noise_components(self):
         if self.control[1] != 0: # if angular velocity is not zero
@@ -259,7 +263,9 @@ class EKF:
             row2term2 = 0
             row3term1 = 0
             row3term2 = 0
-        self.motion_j_noise = np.array(([row1term1, row1term2],[row2term1,row2term2],[row3term1,row3term2]))
+        temp = np.zeros((10,2))
+        self.motion_j_noise = np.concatenate((np.array(([row1term1, row1term2],[row2term1,row2term2],[row3term1,row3term2])),temp),axis=0)
+        #print(self.motion_j_noise.shape)
 
     def observation_jacobian_state_vector(self):
         row1term1 = (self.state_vector[0] - self.cur_id[0])/np.sqrt((self.state_vector[0] - self.cur_id[0])**2 + (self.state_vector[1] - self.cur_id[1])**2) #checked
@@ -268,8 +274,10 @@ class EKF:
         row2term1 = (self.cur_id[1] - self.state_vector[1]) / ((self.cur_id[0] - self.state_vector[0])**2 + (self.cur_id[1] - self.state_vector[1])**2) #checked
         row2term2 = -1/((((self.cur_id[1]-self.state_vector[1])**2)/(self.cur_id[0]-self.state_vector[0]))+(self.cur_id[0]- self.state_vector[0])) #checked
         row2term3 = -1
-        jacobian = [[row1term1, row1term2, row1term3],[row2term1, row2term2, row2term3]] #!
-        self.obs_j_state = np.array(jacobian)
+        temp = np.zeros((2,10))
+        jacobian = np.array([[row1term1, row1term2, row1term3],[row2term1, row2term2, row2term3]]) #!
+        self.obs_j_state = np.concatenate((jacobian, temp), axis=1)
+        #print(self.obs_j_state)
 
     def print_initials(self):
         pass
