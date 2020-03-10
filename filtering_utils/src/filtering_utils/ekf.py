@@ -13,25 +13,27 @@ import pdb
 
 class EKF:
     def __init__(self, state_vector_size, control_size, measurement_size):
-        self.state_vector = np.zeros((state_vector_size, 1))
-        self.cov_matrix = 1000. * np.identity(state_vector_size)
+        self.state_vector = np.zeros((state_vector_size+10, 1))
+        self.cov_matrix = 1000. * np.identity(state_vector_size+10)
         self.q = np.zeros((control_size, control_size))
-        self.q = np.diag(([0.4**2, 0, .05**2,0,0,0,0,0,0,0,0,0,0]))
         self.R = np.zeros((measurement_size, measurement_size))
         self.R = np.diag(([0.1, 0.01]))
-        self.motion_j_state = np.zeros((state_vector_size, state_vector_size))
+        self.motion_j_state = np.zeros((state_vector_size+10, state_vector_size+10))
         self.motion_j_noise = np.zeros((state_vector_size, control_size))
-        self.obs_j_state = np.zeros((measurement_size, state_vector_size))
+        self.obs_j_state = np.zeros((measurement_size, state_vector_size+10))
         self.Q = np.zeros((state_vector_size, state_vector_size))
         self.beacons = {1:[7.3, 3.0], 2:[1,1],3:[9,9],4:[1,8],5:[5.8,8]}
         self.new_meas = np.empty((1,3))
+        self.beacons_detected = [0]*5
+        self.F = np.zeros((3,13))
+        self.F[0,0]=1
+        self.F[1,1]=1
+        self.F[2,2]=1
+        self.FT = self.F.transpose()
         #
         self.control = np.zeros((2,1))
         self.Z = np.zeros((2,1))
-        #self.v_sigma = [] # for sampling sigma
-        #self.w_sigma = [] # for sampling sigma
         self.prev_time_stamp = 0 # keeping the last time stamp
-        #self.prev_state = np.array((3,1))
         from nav_msgs.msg import Odometry
         self.gt = rospy.Subscriber('base_pose_ground_truth', Odometry, self.initialize_state_vector) # Initializing state_vector with ground truth
         #
@@ -86,11 +88,11 @@ class EKF:
         self.control = np.array(([v,w]))
         #
         # determine q-matrix aka process noise
-        #self.q = np.array(([0.4**2, 0],[0,.05**2])) #FIXME FOR TEST PURPOSES [0.04, 0],[0,0.001]
+        self.q = np.array(([0.1**2, 0],[0,.001**2])) #FIXME FOR TEST PURPOSES [0.04, 0],[0,0.001]
         #
         self.propagate_state()
         self.calculate_cov()
-        print(self.state_vector)
+        #print(self.state_vector)
 
     def update(self, msg): #
         self.cur_id = self.beacons[msg.ids[0]] # coordinates of current transmitter
@@ -107,35 +109,27 @@ class EKF:
         theta = self.process_angle(pos_x, pos_y, theta)
         self.observation_jacobian_state_vector()
         #nominator
-        print(self.cov_matrix.shape)
         floor = self.cov_matrix.dot(self.obs_j_state.transpose()).astype(np.float32)
         
         #denominator
         # obs_j_state 2x3, cov_matrix 3x3, obs_j_state 3x2
         bottom = (self.obs_j_state.dot(self.cov_matrix).dot(self.obs_j_state.transpose()) + self.R).astype(np.float32) # palce self.R diag(0.1 0.01)
-        #bottom = (self.obs_j_state.dot(self.cov_matrix).dot(self.obs_j_state.transpose()) + 0.01).astype(np.float32) # WAS 0,01
 
         self.K = floor.dot(np.linalg.inv(bottom)) # K is 3x2
-        #self.K = floor*(1/bottom) # K is 3x2
 
         expected_meas = self.measurement_model(self.state_vector)
         new_meas = np.array(([rng, theta]))
-        #expected_meas = self.measurement_model(self.state_vector)[0]
 
-        #new_meas = self.measurement_model([pos_x, pos_y, theta]) # THAT WORKS BETTER SO FAR
-        #tempterm = np.array(([rng - expected_meas[0]])) #meas_state[2] - expected_meas[1]]))#,theta - expected_meas[1]] # 
         innovation = np.array(([new_meas[0] - expected_meas[0], new_meas[1] - expected_meas[1]]))
-        #innovation = new_meas.T - expected_meas.T
-       
-        #self.state_vector = self.state_vector + self.K.dot(tempterm)
-        #print("Shape is:", self.K.shape)
+        #innovation = np.array(([abs(new_meas[0] - expected_meas[0]), abs(new_meas[1] - expected_meas[1])]))
+
         self.state_vector = self.state_vector + self.K.dot(innovation)
-        self.cov_matrix = (np.eye(13) - self.K.dot(self.obs_j_state)).dot(self.cov_matrix)
+        self.cov_matrix = (np.eye(3) - self.K.dot(self.obs_j_state)).dot(self.cov_matrix)
         # if self.cov_matrix[0][0] > 50:
         #     pdb.set_trace()
         #self.cov_matrix = self.K*self.obs_j_state
-        print("State vector is:")
         print(self.state_vector)
+        print()
         #print(self.cov_matrix)
 
     def process_angle(self,x,y,a):
@@ -149,22 +143,29 @@ class EKF:
 
 
     def propagate_state(self):
+        temp_mat = np.zeros((3, 1))
         if self.control[1] != 0:
             term = self.control[0]/self.control[1]
-            x = self.state_vector[0] - term*np.sin(self.state_vector[2])+ term*np.sin(self.state_vector[2]+self.control[1]*self.dt)
-            y = self.state_vector[1] + term*np.cos(self.state_vector[2])- term*np.cos(self.state_vector[2]+self.control[1]*self.dt)
-            theta = self.state_vector[2] + self.control[1]*self.dt
-            theta = self.wrap_to_pi(theta)
+            #x = self.state_vector[0] - term*np.sin(self.state_vector[2])+ term*np.sin(self.state_vector[2]+self.control[1]*self.dt)
+            temp_mat[0] = self.state_vector[0] - term*np.sin(self.state_vector[2])+ term*np.sin(self.state_vector[2]+self.control[1]*self.dt)
+            #y = self.state_vector[1] + term*np.cos(self.state_vector[2])- term*np.cos(self.state_vector[2]+self.control[1]*self.dt)
+            temp_mat[1] = self.state_vector[1] + term*np.cos(self.state_vector[2])- term*np.cos(self.state_vector[2]+self.control[1]*self.dt)
+            #theta = self.state_vector[2] + self.control[1]*self.dt
+            temp_mat[2] = self.state_vector[2] + self.control[1]*self.dt
+            #theta = self.wrap_to_pi(theta)
+            temp_mat[2] = self.wrap_to_pi(self.state_vector[2])
 
         else:
             term = self.control[0]
-            x = self.state_vector[0] + self.control[0]*np.cos(self.state_vector[2])*self.dt #self.control[0]*self.dt
-            y = self.state_vector[1] + self.control[0]*np.sin(self.state_vector[2])*self.dt #self.control[0]*self.dt
-            theta = self.wrap_to_pi(self.state_vector[2])
+            #x = self.state_vector[0] + self.control[0]*np.cos(self.state_vector[2])*self.dt #self.control[0]*self.dt
+            self.state_vector[0] = self.state_vector[0] + self.control[0]*np.cos(self.state_vector[2])*self.dt #self.control[0]*self.dt
+            #y = self.state_vector[1] + self.control[0]*np.sin(self.state_vector[2])*self.dt #self.control[0]*self.dt
+            self.state_vector[1] = self.state_vector[1] + self.control[0]*np.sin(self.state_vector[2])*self.dt #self.control[0]*self.dt
+            #theta = self.wrap_to_pi(self.state_vector[2])
+            self.state_vector[2] = self.wrap_to_pi(self.state_vector[2])
             
-        self.state_vector = np.array([x,y,theta])
+        #self.state_vector = np.array([x,y,theta])
         
-
 
     def measurement_model(self,state):
         x = state[0]
@@ -183,107 +184,79 @@ class EKF:
 
 
     def calculate_cov(self):
+        self.motion_jacobian_state_vector()
+        self.motion_jacobian_noise_components()
         self.Q = self.motion_j_noise.dot(self.q).dot(self.motion_j_noise.transpose())
         self.cov_matrix = self.motion_j_state.dot(self.cov_matrix).dot(self.motion_j_state.transpose()) + self.Q
 
-        self.motion_jacobian_state_vector()
-        self.motion_jacobian_noise_components()
-
     def motion_jacobian_state_vector(self):
-        if self.control[1] != 0:
-            x = self.state_vector[0]
-            y = self.state_vector[1]
-            theta = self.state_vector[2]
-            v = self.control[0]
-            w = self.control[1]
-            dt = self.dt
-            dv = 0
-            dw = 0
-            row1term1 = 1
-            row1term2 = 0
-            row1term3 = (np.cos(theta + dt*(dw + w))*(dv+v))/(dw + w) \
-                - (np.cos(theta)*(dv+v))/(dw + w)
-            #TEST
-            row1term3 = (self.control[0]/self.control[1])*np.cos(self.state_vector[2]) \
-                - (self.control[0]/self.control[1])*np.cos(self.state_vector[2] * self.control[1]*self.dt)
-            #TEST
-
-            row2term1 = 0
-            row2term2 = 1
-            row2term3 = (np.sin(theta + dt*(dw + w))*(dv+v))/(dw + w) \
-                - (np.sin(theta)*(dv+v))/(dw + w)
-            #TEST
-            row2term3 = (self.control[0]/self.control[1])*np.sin(self.state_vector[2]) \
-                - (self.control[0]/self.control[1])*np.sin(self.state_vector[2] * self.control[1]*self.dt)
-            #TEST
-
-            row3term1 = 0
-            row3term2 = 0
-            row3term3 = 1
-
+        v = self.control[0]
+        w = self.control[1]
+        theta = self.state_vector[2]
+        term = v/w
+        dt = self.dt
+        temp_mat = np.eye(3)
+        if np.isclose(w,0):
+            # Linear motion model
+            temp_mat[0,:] = np.array([1,0,-dt*v*np.sin(theta)])
+            temp_mat[1,:] = np.array([0,1,dt*v*np.cos(theta)])
+            temp_mat[2,:] = np.array([0,0,1])
         else:
-            row1term3 = 0
-            row2term3 = 0
-        temp = np.concatenate((np.zeros((3,10)), np.eye(10)), axis=0)
-        base_jacobian = np.array(([1,0,row1term3],[0,1,row2term3],[0,0,1]))
-        temp2 = np.concatenate((base_jacobian,np.zeros((10,3))))
-        self.motion_j_state = np.concatenate((temp2, temp), axis=1)
-        #print(self.motion_j_state.shape)
-        #self.motion_j_state = np.array(([1,0,row1term3],[0,1,row2term3],[0,0,1]))
+            # Non-linear motion model
+            temp_mat[0,:] = np.array([1,0,term*(np.cos(theta + dt*w) - np.cos(theta))])
+            temp_mat[1,:] = np.array([0,1,term*(np.sin(theta + dt*w) - np.sin(theta))])
+            temp_mat[2,:] = np.array([0,0,1])
+        self.motion_j_state = np.eye(13)+np.matmul(np.matmul(np.transpose(self.F), temp_mat), self.F)
+
 
     def motion_jacobian_noise_components(self):
-        if self.control[1] != 0: # if angular velocity is not zero
-            x = self.state_vector[0]
-            y = self.state_vector[1]
-            theta = self.state_vector[2]
-            v = self.control[0]
-            w = self.control[1]
-            dt = self.dt
-            dv = 0
-            dw = 0
-
-            dvpv = (dv + v)
-            dwpw = (dw + w)
-
-            row1term1 = (np.sin(theta + dt*dwpw)/dwpw) - (np.sin(theta)/dwpw)
-            row2term1 = (np.cos(theta)/dwpw) - (np.cos(theta + dt*dwpw)/dwpw)
-            row3term1 = 0
-
-            row1term2 = (np.sin(theta)*dvpv)/(dwpw**2) - ((np.sin(theta + dt*dwpw)*dvpv)/(dwpw**2)) + \
-                ((dt*np.cos(theta + dt*dwpw)*dvpv)/dwpw)
-            row2term2 = ((np.cos(theta + dt*dwpw)*dvpv)/(dwpw**2)) - ((np.cos(theta)*dvpv)/(dwpw**2)) + \
-                ((dt*np.sin(theta + dt*dwpw)*dvpv)/dwpw)
-            row3term2 = dt
-
-
+        #TODO check row1term2
+        v = self.control[0]
+        w = self.control[1]
+        theta = self.state_vector[2][0]
+        dt = self.dt
+        if np.isclose(w,0):
+            # linear motion model
+            self.motion_j_noise[0,:] = np.array([np.cos(theta)*dt, 0])
+            self.motion_j_noise[1,:] = np.array([np.sin(theta)*dt, 0])
+            self.motion_j_noise[2,:] = np.array([0, 0])
         else:
-            row1term1 = self.dt
-            row1term2 = 0
-            row2term1 = self.dt
-            row2term2 = 0
-            row3term1 = 0
-            row3term2 = 0
-        temp = np.zeros((10,2))
-        self.motion_j_noise = np.concatenate((np.array(([row1term1, row1term2],[row2term1,row2term2],[row3term1,row3term2])),temp),axis=0)
-        #print(self.motion_j_noise.shape)
+            sigma1 = np.sin(theta + dt*w)
+            sigma2 = np.cos(theta + dt*w)
+            #term1 = (1/w)*(sigma1 - np.sin(theta))
+            #term2 = (v/w**2)*(np.sin(theta) - sigma1) + (dt*v*sigma2)/w
+            #print(term1, term2)
+            self.motion_j_noise[0,:] = np.array([(1/w)*(sigma1 - np.sin(theta)), \
+                (v/w**2)*(np.sin(theta) - sigma1) + (dt*v*sigma2)/w])
+            #self.motion_j_noise[0,:] = np.array([term1, term2])
+            self.motion_j_noise[1,:] = np.array([(1/w)*(np.cos(theta) - sigma2), (v/w**2)*(sigma2 - np.cos(theta)) + (dt*v*sigma1)/w])
+            self.motion_j_noise[2,:] = np.array([0,dt])
+            # non-linear motion model
 
     def observation_jacobian_state_vector(self):
-        row1term1 = (self.state_vector[0] - self.cur_id[0])/np.sqrt((self.state_vector[0] - self.cur_id[0])**2 + (self.state_vector[1] - self.cur_id[1])**2) #checked
-        row1term2 = (self.state_vector[1] - self.cur_id[1])/np.sqrt((self.state_vector[0] - self.cur_id[0])**2 + (self.state_vector[1] - self.cur_id[1])**2) #checked
-        row1term3 = 0
-        row2term1 = (self.cur_id[1] - self.state_vector[1]) / ((self.cur_id[0] - self.state_vector[0])**2 + (self.cur_id[1] - self.state_vector[1])**2) #checked
-        row2term2 = -1/((((self.cur_id[1]-self.state_vector[1])**2)/(self.cur_id[0]-self.state_vector[0]))+(self.cur_id[0]- self.state_vector[0])) #checked
-        row2term3 = -1
-        temp = np.zeros((2,10))
-        jacobian = np.array([[row1term1, row1term2, row1term3],[row2term1, row2term2, row2term3]]) #!
-        self.obs_j_state = np.concatenate((jacobian, temp), axis=1)
-        #print(self.obs_j_state)
+        mx = self.cur_id[0]
+        my = self.cur_id[1]
+        x = self.state_vector[0][0]
+        y = self.state_vector[1][0]
+        a = (x - mx)**2 + (y - my)**2
+        b = np.sqrt(a)
+        self.obs_j_state[0,:] = np.array([(x-mx)/b, (y-my)/b, 0])
+        self.obs_j_state[1,:] = np.array([(my-y)/a, (x-mx)/a, -1])
 
     def print_initials(self):
         pass
 
     def wrap_to_pi(self,angle):
         return (angle + np.pi) % (2 * np.pi) - np.pi
+        # temp = angle
+        # while (temp > np.pi):
+        #     temp = temp - (np.pi*2)
+        
+        # while (temp < -np.pi):
+        #     temp = temp + (np.pi*2)
+
+        # return temp
+
 
     def save_data_for_analysis(self, msg):
         gtx = msg.pose.pose.position.x

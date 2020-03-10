@@ -8,7 +8,7 @@ import pickle
 from tf.transformations import euler_from_quaternion
 import signal
 
-ekf = EKF(13, 13, 13)
+ekf = EKF(3,2,2)
 
 odometry_history = []
 state_history = []
