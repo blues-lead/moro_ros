@@ -43,9 +43,7 @@ class PF:
         with open('ground_truth_pf.pickle', 'wb') as file:
             pickle.dump(self.ground_truth_state_history,file)
         with open('states_pf.pickle','wb') as file:
-            pickle.dump(self.state_data_history,file)
-        #with open('cov_params.pickle','wb') as file:
-            #pickle.dump(self.cov_parameters_history,file)        
+            pickle.dump(self.state_data_history,file)   
 
     def initialize(self, msg):
         self.prev_time_stamp = msg.header.stamp.secs + msg.header.stamp.nsecs*(10**-9)
@@ -55,7 +53,7 @@ class PF:
         #self.gt.unregister()
     
     def get_gt(self, msg):
-        #print(msg.pose.pose.position.x)
+        # Get ground truth for debugging purposes
         theta = msg.pose.pose.orientation
         theta = euler_from_quaternion([theta.x,theta.y,theta.z, theta.w])[2]
         self.GT_POS = [msg.pose.pose.position.x, msg.pose.pose.position.y, theta]
@@ -77,12 +75,12 @@ class PF:
         self.prev_time_stamp = odometry.header.stamp.secs + odometry.header.stamp.nsecs*(10**-9) # timestamps
         self.control[0] = v
         self.control[1] = w
-        self.q = np.array(([0.04, 0],[0,.005]))
+        self.q = np.array(([0.4**2, 0],[0,.001**2]))
         self.propagate_state()
         #print(np.mean(self.particles[:,0]), np.mean(self.particles[:,1]))
 
     def propagate_state(self):
-        std = [0.05, 0.04]
+        std = [0.4**2, 0.001**2]
         N = len(self.particles)
 
         # move in the (noisy) commanded direction

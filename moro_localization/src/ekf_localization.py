@@ -32,7 +32,8 @@ def marker_callback(msg):
         ekf.update(info[i])
 
 def collect_data(msg):
-    ekf.save_data_for_analysis(msg)
+    pass
+    #ekf.save_data_for_analysis(msg)
 
 
 def ekf_loc():
