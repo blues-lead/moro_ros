@@ -36,6 +36,7 @@ class EKF:
         #
         self.TMatrix = np.zeros((3,13))
         self.TMatrix[0:3,0:3] = np.eye(3)
+        self.seen_marks = np.zeros((5,1))
         #
         self.state_data_history = []
         self.ground_truth_state_history = []
@@ -93,7 +94,7 @@ class EKF:
         
         if self.initialized == False:
             return
-        pdb.set_trace()
+        #pdb.set_trace()
         self.cur_id = self.beacons[msg.ids[0]] # coordinates of current transmitter
         
         # landmark position in robot frame
@@ -108,7 +109,14 @@ class EKF:
         theta = self.process_angle(pos_x, pos_y, theta)
         #self.observation_jacobian_state_vector(pos_x, pos_y, msg.ids[0])
         #expected_meas = self.measurement_model(self.state_vector, msg.ids[0])
-        expected_meas = self.measurement_model(self.new_meas, msg.ids[0])
+        mark_angle = self.wrap_to_pi(theta + self.state_vector[2])
+        if self.seen_marks[msg.ids[0]-1]==0:
+            self.state_vector[2 * msg.ids[0] + 1, 0] = self.state_vector[0] + rng * np.cos(mark_angle)
+            self.state_vector[2 * msg.ids[0] + 2, 0] = self.state_vector[1] + rng * np.sin(mark_angle)
+            self.seen_marks[msg.ids[0]-1] = 1
+
+
+        expected_meas = self.measurement_model(self.state_vector, msg.ids[0])
         #nominator
         floor = self.cov_matrix.dot(self.obs_j_state.transpose()).astype(np.float32)
         
@@ -133,17 +141,19 @@ class EKF:
         #print(self.cov_matrix)
 
     def process_angle(self,x,y,a):
-        rot_matrix = np.array(([np.cos(a), -np.sin(a)],[np.sin(a), np.cos(a)]))
+        rot_matrix = np.array(([np.cos(a), -np.sin(a)],[np.sin(a), np.cos(a)])) # WORKS
+        #rot_matrix = np.array(([np.cos(a), np.sin(a)],[-np.sin(a), np.cos(a)]))
         xy = np.array([x, y]).T
         new_xy = rot_matrix.transpose().dot(xy)
-        bearing = np.arctan2(new_xy[1], new_xy[0]) + a
-        self.new_meas = np.array(([new_xy[0], new_xy[1], bearing]))
-        return bearing
+        bearing = np.arctan2(new_xy[1], new_xy[0]) + self.wrap_to_pi(a)
+        self.new_meas = np.array(([new_xy[0], new_xy[1], self.wrap_to_pi(bearing)]))
+        return self.wrap_to_pi(bearing)
 
 
 
     def propagate_state(self):
         #print(self.state_vector)
+        #pdb.set_trace()
         temp = np.zeros((3,1))
         if np.isclose(self.control[1],0):
             term = self.control[0]
@@ -164,7 +174,9 @@ class EKF:
             temp[2] = self.state_vector[2] + self.control[1]*self.dt
             #theta = self.wrap_to_pi(theta)
             temp[2] = self.wrap_to_pi(self.state_vector[2]) # WORKING
-        self.state_vector = self.state_vector + self.TMatrix.T.dot(temp)
+        #self.state_vector = self.state_vector + self.TMatrix.T.dot(temp)
+        self.state_vector = self.TMatrix.T.dot(temp)
+        #self.state_vector = np.concatenate((temp,self.state_vector[3:]),axis=0)
         self.state_vector[2] = self.wrap_to_pi(self.state_vector[2])
         
         
@@ -211,9 +223,11 @@ class EKF:
             temp[0,:] = np.array([1,0,term*(np.cos(theta + dt*w) - np.cos(theta))])
             temp[1,:] = np.array([0,1,term*(np.sin(theta + dt*w) - np.sin(theta))])
             temp[2,:] = np.array([0,0,1])
-        identity = np.zeros((13,10))
-        identity[3:,:] = np.eye(10)
-        self.motion_j_state = np.concatenate((self.TMatrix.T.dot(temp),identity),axis=1)
+        #identity = np.zeros((13,10))
+        #identity[3:,:] = np.eye(10)
+        identity = np.eye(13)
+        identity[0:3, 0:3] = temp
+        self.motion_j_state = identity
         #print(self.motion_j_state)
 
 
@@ -242,6 +256,7 @@ class EKF:
             # non-linear motion model
 
     def observation_jacobian_state_vector(self,x,y,j):
+        #pdb.set_trace()
         Fxj = np.zeros((5, 2 * 5 + 3))
         Fxj[0:3, 0:3] = np.eye(3)
         Fxj[0:3, 3:2 * j + 1] = np.zeros((3, 2 * j - 2))
@@ -253,21 +268,20 @@ class EKF:
         Fxj[3:5, 2 * j + 1:2 * j + 3] = np.eye(2)
         Fxj[3:5, 2 * j + 3: 2 * 5 + 3] = np.zeros((2, 2 * 5 - 2 * j))
 
-        q = np.square(x) + np.square(y)
-        delta = np.zeros((2, 5)) # self.measurement_size
-        delta[0, 0] = -1 * (x / np.sqrt(q))
-        delta[0, 1] = -1 * (y / np.sqrt(q))
-        delta[0, 2] = 0
-        delta[0, 3] = (x / np.sqrt(q))
-        delta[0, 4] = (y / np.sqrt(q))
 
-        delta[1, 0] = y / q
-        delta[1, 1] = -1 * (x / q)
-        delta[1, 2] = -1
-        delta[1, 3] = -1*(y / q)
-        delta[1, 4] = (x / q)
-
-        self.obs_j_state = np.matmul(delta, Fxj)
+        #pdb.set_trace()
+        H = np.zeros((2,5))
+        px = self.state_vector[2*j+1, 0]
+        py = self.state_vector[2*j+2, 0]
+        
+        s1,s2 = (x - px)[0], (y - py)[0]
+        delta = np.array([s1,s2])
+        qt = delta.T.dot(delta)
+        
+        H[0,:] = np.array([-np.sqrt(qt)*s1, -np.sqrt(qt)*s2, 0, np.sqrt(qt)*s1, np.sqrt(qt)*s2])
+        H[1,:] = np.array([s2, -s1, -qt, -s2, s1])
+        H = (1/qt)*H
+        self.obs_j_state = H.dot(Fxj)
 
         '''mx = self.cur_id[0]
         my = self.cur_id[1]
