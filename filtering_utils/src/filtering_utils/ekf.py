@@ -129,6 +129,7 @@ class EKF:
         new_meas = np.array(([rng, theta]))
 
         innovation = np.array(([new_meas[0] - expected_meas[0], new_meas[1] - expected_meas[1]]))
+        innovation[1] = self.wrap_to_pi(innovation[1])
         #innovation = np.array(([abs(new_meas[0] - expected_meas[0]), abs(new_meas[1] - expected_meas[1])]))
 
         self.state_vector = self.state_vector + self.K.dot(innovation)
@@ -175,8 +176,8 @@ class EKF:
             #theta = self.wrap_to_pi(theta)
             temp[2] = self.wrap_to_pi(self.state_vector[2]) # WORKING
         #self.state_vector = self.state_vector + self.TMatrix.T.dot(temp)
-        self.state_vector = self.TMatrix.T.dot(temp)
-        #self.state_vector = np.concatenate((temp,self.state_vector[3:]),axis=0)
+        #self.state_vector = self.TMatrix.T.dot(temp)
+        self.state_vector = np.concatenate((temp,self.state_vector[3:]),axis=0)
         self.state_vector[2] = self.wrap_to_pi(self.state_vector[2])
         
         
