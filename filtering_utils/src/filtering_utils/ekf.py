@@ -88,13 +88,13 @@ class EKF:
         #
         self.propagate_state()
         self.calculate_cov()
-        #print(self.state_vector)
+        print(self.state_vector)
 
     def update(self, msg): #
         
         if self.initialized == False:
             return
-        #pdb.set_trace()
+        pdb.set_trace()
         self.cur_id = self.beacons[msg.ids[0]] # coordinates of current transmitter
         
         # landmark position in robot frame
@@ -127,12 +127,13 @@ class EKF:
         self.K = floor.dot(np.linalg.inv(bottom)) # K is 3x2
 
         new_meas = np.array(([rng, theta]))
-
+        #pdb.set_trace()
         innovation = np.array(([new_meas[0] - expected_meas[0], new_meas[1] - expected_meas[1]]))
         innovation[1] = self.wrap_to_pi(innovation[1])
         #innovation = np.array(([abs(new_meas[0] - expected_meas[0]), abs(new_meas[1] - expected_meas[1])]))
 
         self.state_vector = self.state_vector + self.K.dot(innovation)
+        self.state_vector[2] = self.wrap_to_pi(self.state_vector[2])
         self.cov_matrix = (np.eye(13) - self.K.dot(self.obs_j_state)).dot(self.cov_matrix)
         # if self.cov_matrix[0][0] > 50:
         #     pdb.set_trace()
@@ -192,7 +193,7 @@ class EKF:
         #py = self.cur_id[1]
 
         r = np.sqrt((px-x)**2 + (py-y)**2)      #Distance
-        phi = np.arctan2(py-y, px-x) - self.wrap_to_pi(theta)    #Bearing
+        phi = np.arctan2(py-y, px-x) - theta    #Bearing
 
         self.Z[0] = r
         self.Z[1] = self.wrap_to_pi(phi)
