@@ -25,8 +25,7 @@ def marker_callback(msg):
     info = msg.markers
     if len(info) == 0:
         return
-    for i in range(len(info)):
-        ekf.update(info[i])
+    ekf.update(info)
 
 def collect_data(msg):
     ekf.save_data_for_analysis(msg)
