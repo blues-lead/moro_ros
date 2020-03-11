@@ -70,6 +70,8 @@ class EKF:
         self.initialized = True
 
     def predict(self, odometry): # odometry added by me
+        if self.initialized == False:
+            return
         # Get v,w from odometry msg
         w = odometry.twist.twist.angular.z
         v = odometry.twist.twist.linear.x
@@ -88,6 +90,8 @@ class EKF:
         #print(self.state_vector)
 
     def update(self, msg): #
+        if self.initialized == False:
+            return
         self.cur_id = self.beacons[msg.ids[0]] # coordinates of current transmitter
         
         # landmark position in robot frame
@@ -100,7 +104,8 @@ class EKF:
         #bearing
         theta = self.wrap_to_pi(euler_from_quaternion([msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w])[2])
         theta = self.process_angle(pos_x, pos_y, theta)
-        self.observation_jacobian_state_vector()
+        #self.observation_jacobian_state_vector(pos_x, pos_y, msg.ids[0])
+        expected_meas = self.measurement_model(self.state_vector, msg.ids[0])
         #nominator
         floor = self.cov_matrix.dot(self.obs_j_state.transpose()).astype(np.float32)
         
@@ -110,14 +115,13 @@ class EKF:
 
         self.K = floor.dot(np.linalg.inv(bottom)) # K is 3x2
 
-        expected_meas = self.measurement_model(self.state_vector)
         new_meas = np.array(([rng, theta]))
 
         innovation = np.array(([new_meas[0] - expected_meas[0], new_meas[1] - expected_meas[1]]))
         #innovation = np.array(([abs(new_meas[0] - expected_meas[0]), abs(new_meas[1] - expected_meas[1])]))
 
         self.state_vector = self.state_vector + self.K.dot(innovation)
-        self.cov_matrix = (np.eye(3) - self.K.dot(self.obs_j_state)).dot(self.cov_matrix)
+        self.cov_matrix = (np.eye(13) - self.K.dot(self.obs_j_state)).dot(self.cov_matrix)
         # if self.cov_matrix[0][0] > 50:
         #     pdb.set_trace()
         #self.cov_matrix = self.K*self.obs_j_state
@@ -136,7 +140,8 @@ class EKF:
 
 
     def propagate_state(self):
-        temp = np.array((3,1))
+        #print(self.state_vector)
+        temp = np.zeros((3,1))
         if np.isclose(self.control[1],0):
             term = self.control[0]
             #x = self.state_vector[0] + self.control[0]*np.cos(self.state_vector[2])*self.dt #self.control[0]*self.dt
@@ -159,19 +164,23 @@ class EKF:
         self.state_vector = self.state_vector + self.TMatrix.T.dot(temp)
         self.state_vector[2] = self.wrap_to_pi(self.state_vector[2])
         
+        
 
-    def measurement_model(self,state):
+    def measurement_model(self,state,j):
+        px = self.state_vector[2*j+1, 0]
+        py = self.state_vector[2*j+2, 0]
         x = state[0]
         y = state[1]
         theta = state[2]
-        px = self.cur_id[0]
-        py = self.cur_id[1]
+        #px = self.cur_id[0]
+        #py = self.cur_id[1]
 
         r = np.sqrt((px-x)**2 + (py-y)**2)      #Distance
         phi = np.arctan2(py-y, px-x) - self.wrap_to_pi(theta)    #Bearing
 
         self.Z[0] = r
-        self.Z[1] = self.wrap_to_pi(phi) #FIXME added for example
+        self.Z[1] = self.wrap_to_pi(phi)
+        self.observation_jacobian_state_vector(x,y,j)
         return self.Z
 
 
@@ -186,18 +195,23 @@ class EKF:
         v = self.control[0]
         w = self.control[1]
         theta = self.state_vector[2]
-        term = v/w
         dt = self.dt
+        temp = np.eye(3)
         if np.isclose(w,0):
             # Linear motion model
-            self.motion_j_state[0,:] = np.array([1,0,-dt*v*np.sin(theta)])
-            self.motion_j_state[1,:] = np.array([0,1,dt*v*np.cos(theta)])
-            self.motion_j_state[2,:] = np.array([0,0,1])
+            temp[0,:] = np.array([1,0,-dt*v*np.sin(theta)])
+            temp[1,:] = np.array([0,1,dt*v*np.cos(theta)])
+            temp[2,:] = np.array([0,0,1])
         else:
+            term = v/w
             # Non-linear motion model
-            self.motion_j_state[0,:] = np.array([1,0,term*(np.cos(theta + dt*w) - np.cos(theta))])
-            self.motion_j_state[1,:] = np.array([0,1,term*(np.sin(theta + dt*w) - np.sin(theta))])
-            self.motion_j_state[2,:] = np.array([0,0,1])
+            temp[0,:] = np.array([1,0,term*(np.cos(theta + dt*w) - np.cos(theta))])
+            temp[1,:] = np.array([0,1,term*(np.sin(theta + dt*w) - np.sin(theta))])
+            temp[2,:] = np.array([0,0,1])
+        identity = np.zeros((13,10))
+        identity[3:,:] = np.eye(10)
+        self.motion_j_state = np.concatenate((self.TMatrix.T.dot(temp),identity),axis=1)
+        #print(self.motion_j_state)
 
 
     def motion_jacobian_noise_components(self):
@@ -224,15 +238,42 @@ class EKF:
             self.motion_j_noise[2,:] = np.array([0,dt])
             # non-linear motion model
 
-    def observation_jacobian_state_vector(self):
-        mx = self.cur_id[0]
+    def observation_jacobian_state_vector(self,x,y,j):
+        Fxj = np.zeros((5, 2 * 5 + 3))
+        Fxj[0:3, 0:3] = np.eye(3)
+        Fxj[0:3, 3:2 * j + 1] = np.zeros((3, 2 * j - 2))
+        Fxj[0:3, 2 * j + 1:2 * j + 3] = np.zeros((3, 2))
+        Fxj[0:3, 2 * j + 3: 2 * 5 + 3] = np.zeros((3, 2 * 5 - 2 * j))
+
+        Fxj[3:5, 0:3] = np.zeros((2, 3))
+        Fxj[3:5, 3:2 * j + 1] = np.zeros((2, 2 * j - 2))
+        Fxj[3:5, 2 * j + 1:2 * j + 3] = np.eye(2)
+        Fxj[3:5, 2 * j + 3: 2 * 5 + 3] = np.zeros((2, 2 * 5 - 2 * j))
+
+        q = np.square(x) + np.square(y)
+        delta = np.zeros((2, 5)) # self.measurement_size
+        delta[0, 0] = -1 * (x / np.sqrt(q))
+        delta[0, 1] = -1 * (y / np.sqrt(q))
+        delta[0, 2] = 0
+        delta[0, 3] = (x / np.sqrt(q))
+        delta[0, 4] = (y / np.sqrt(q))
+
+        delta[1, 0] = y / q
+        delta[1, 1] = -1 * (x / q)
+        delta[1, 2] = -1
+        delta[1, 3] = -1*(y / q)
+        delta[1, 4] = (x / q)
+
+        self.obs_j_state = np.matmul(delta, Fxj)
+
+        '''mx = self.cur_id[0]
         my = self.cur_id[1]
         x = self.state_vector[0][0]
         y = self.state_vector[1][0]
         a = (x - mx)**2 + (y - my)**2
         b = np.sqrt(a)
         self.obs_j_state[0,:] = np.array([(x-mx)/b, (y-my)/b, 0])
-        self.obs_j_state[1,:] = np.array([(my-y)/a, (x-mx)/a, -1])
+        self.obs_j_state[1,:] = np.array([(my-y)/a, (x-mx)/a, -1])'''
 
     def print_initials(self):
         pass
