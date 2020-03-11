@@ -136,27 +136,28 @@ class EKF:
 
 
     def propagate_state(self):
-        if self.control[1] != 0:
-            term = self.control[0]/self.control[1]
-            #x = self.state_vector[0] - term*np.sin(self.state_vector[2])+ term*np.sin(self.state_vector[2]+self.control[1]*self.dt)
-            self.state_vector[0] = self.state_vector[0] - term*np.sin(self.state_vector[2])+ term*np.sin(self.state_vector[2]+self.control[1]*self.dt)
-            #y = self.state_vector[1] + term*np.cos(self.state_vector[2])- term*np.cos(self.state_vector[2]+self.control[1]*self.dt)
-            self.state_vector[1] = self.state_vector[1] + term*np.cos(self.state_vector[2])- term*np.cos(self.state_vector[2]+self.control[1]*self.dt)
-            #theta = self.state_vector[2] + self.control[1]*self.dt
-            self.state_vector[2] = self.state_vector[2] + self.control[1]*self.dt
-            #theta = self.wrap_to_pi(theta)
-            self.state_vector[2] = self.wrap_to_pi(self.state_vector[2]) # WORKING
-
-        else:
+        temp = np.array((3,1))
+        if np.isclose(self.control[1],0):
             term = self.control[0]
             #x = self.state_vector[0] + self.control[0]*np.cos(self.state_vector[2])*self.dt #self.control[0]*self.dt
-            self.state_vector[0] = self.state_vector[0] + self.control[0]*np.cos(self.state_vector[2])*self.dt #self.control[0]*self.dt
+            temp[0] = self.state_vector[0] + self.control[0]*np.cos(self.state_vector[2])*self.dt #self.control[0]*self.dt
             #y = self.state_vector[1] + self.control[0]*np.sin(self.state_vector[2])*self.dt #self.control[0]*self.dt
-            self.state_vector[1] = self.state_vector[1] + self.control[0]*np.sin(self.state_vector[2])*self.dt #self.control[0]*self.dt
+            temp[1] = self.state_vector[1] + self.control[0]*np.sin(self.state_vector[2])*self.dt #self.control[0]*self.dt
             #theta = self.wrap_to_pi(self.state_vector[2])
-            self.state_vector[2] = self.wrap_to_pi(self.state_vector[2]) # WORKING
-            
-        #self.state_vector = np.array([x,y,theta])
+            temp[2] = self.wrap_to_pi(self.state_vector[2]) # WORKING
+
+        else:
+            term = self.control[0]/self.control[1]
+            #x = self.state_vector[0] - term*np.sin(self.state_vector[2])+ term*np.sin(self.state_vector[2]+self.control[1]*self.dt)
+            temp[0] = self.state_vector[0] - term*np.sin(self.state_vector[2])+ term*np.sin(self.state_vector[2]+self.control[1]*self.dt)
+            #y = self.state_vector[1] + term*np.cos(self.state_vector[2])- term*np.cos(self.state_vector[2]+self.control[1]*self.dt)
+            temp[1] = self.state_vector[1] + term*np.cos(self.state_vector[2])- term*np.cos(self.state_vector[2]+self.control[1]*self.dt)
+            #theta = self.state_vector[2] + self.control[1]*self.dt
+            temp[2] = self.state_vector[2] + self.control[1]*self.dt
+            #theta = self.wrap_to_pi(theta)
+            temp[2] = self.wrap_to_pi(self.state_vector[2]) # WORKING
+        self.state_vector = self.state_vector + self.TMatrix.T.dot(temp)
+        self.state_vector[2] = self.wrap_to_pi(self.state_vector[2])
         
 
     def measurement_model(self,state):
@@ -167,7 +168,7 @@ class EKF:
         py = self.cur_id[1]
 
         r = np.sqrt((px-x)**2 + (py-y)**2)      #Distance
-        phi = np.arctan2(py-y, px-x) - theta    #Bearing
+        phi = np.arctan2(py-y, px-x) - self.wrap_to_pi(theta)    #Bearing
 
         self.Z[0] = r
         self.Z[1] = self.wrap_to_pi(phi) #FIXME added for example
