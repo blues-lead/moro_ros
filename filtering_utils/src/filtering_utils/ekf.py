@@ -90,8 +90,10 @@ class EKF:
         #print(self.state_vector)
 
     def update(self, msg): #
+        
         if self.initialized == False:
             return
+        pdb.set_trace()
         self.cur_id = self.beacons[msg.ids[0]] # coordinates of current transmitter
         
         # landmark position in robot frame
@@ -105,7 +107,8 @@ class EKF:
         theta = self.wrap_to_pi(euler_from_quaternion([msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w])[2])
         theta = self.process_angle(pos_x, pos_y, theta)
         #self.observation_jacobian_state_vector(pos_x, pos_y, msg.ids[0])
-        expected_meas = self.measurement_model(self.state_vector, msg.ids[0])
+        #expected_meas = self.measurement_model(self.state_vector, msg.ids[0])
+        expected_meas = self.measurement_model(self.new_meas, msg.ids[0])
         #nominator
         floor = self.cov_matrix.dot(self.obs_j_state.transpose()).astype(np.float32)
         
