@@ -13,29 +13,29 @@ import pdb
 
 class EKF:
     def __init__(self, state_vector_size, control_size, measurement_size):
-        self.state_vector = np.zeros((state_vector_size+10, 1))
-        self.cov_matrix = 1000. * np.identity(state_vector_size+10)
+        self.state_vector = np.zeros((state_vector_size, 1))
+        self.cov_matrix = 1000. * np.identity(state_vector_size)
         self.q = np.zeros((control_size, control_size))
         self.R = np.zeros((measurement_size, measurement_size))
         self.R = np.diag(([0.1, 0.01]))
-        self.motion_j_state = np.zeros((state_vector_size+10, state_vector_size+10))
+        self.motion_j_state = np.zeros((state_vector_size, state_vector_size))
         self.motion_j_noise = np.zeros((state_vector_size, control_size))
-        self.obs_j_state = np.zeros((measurement_size, state_vector_size+10))
+        self.obs_j_state = np.zeros((measurement_size, state_vector_size))
         self.Q = np.zeros((state_vector_size, state_vector_size))
         self.beacons = {1:[7.3, 3.0], 2:[1,1],3:[9,9],4:[1,8],5:[5.8,8]}
         self.new_meas = np.empty((1,3))
-        self.beacons_detected = [0]*5
-        self.F = np.zeros((3,13))
-        self.F[0,0]=1
-        self.F[1,1]=1
-        self.F[2,2]=1
-        self.FT = self.F.transpose()
         #
         self.control = np.zeros((2,1))
         self.Z = np.zeros((2,1))
+        #self.v_sigma = [] # for sampling sigma
+        #self.w_sigma = [] # for sampling sigma
         self.prev_time_stamp = 0 # keeping the last time stamp
+        #self.prev_state = np.array((3,1))
         from nav_msgs.msg import Odometry
         self.gt = rospy.Subscriber('base_pose_ground_truth', Odometry, self.initialize_state_vector) # Initializing state_vector with ground truth
+        #
+        self.TMatrix = np.zeros((3,13))
+        self.TMatrix[0:3,0:3] = np.eye(3)
         #
         self.state_data_history = []
         self.ground_truth_state_history = []
@@ -48,13 +48,13 @@ class EKF:
         signal.signal(signal.SIGTERM, self.save_before_close)
 
     def save_before_close(self,signum, free):
-        #pass
-        with open('ground_truth.pickle', 'wb') as file:
-            pickle.dump(self.ground_truth_state_history,file)
-        with open('states.pickle','wb') as file:
-            pickle.dump(self.state_data_history,file)
-        with open('cov_params.pickle','wb') as file:
-            pickle.dump(self.cov_parameters_history,file)
+        pass
+        # with open('ground_truth.pickle', 'wb') as file:
+        #     pickle.dump(self.ground_truth_state_history,file)
+        # with open('states.pickle','wb') as file:
+        #     pickle.dump(self.state_data_history,file)
+        # with open('cov_params.pickle','wb') as file:
+        #     pickle.dump(self.cov_parameters_history,file)
 
     def initialize_state_vector(self, msg): # Function for initializing state_vector
         #print("initialize state", self.state_vector.shape)
@@ -70,20 +70,13 @@ class EKF:
         self.initialized = True
 
     def predict(self, odometry): # odometry added by me
-        #TODO determine q-matrix
-        #print('predict state', self.state_vector.shape)
-
         # Get v,w from odometry msg
         w = odometry.twist.twist.angular.z
         v = odometry.twist.twist.linear.x
+
         self.dt = (odometry.header.stamp.secs + odometry.header.stamp.nsecs*(10**-9))-self.prev_time_stamp
-        #print(self.dt)
-        #pdb.set_trace()
-        #
         # get timestamp
         self.prev_time_stamp = odometry.header.stamp.secs + odometry.header.stamp.nsecs*(10**-9)
-        #print('Seconds gone is', self.dt)
-        #
         # form internal control vector
         self.control = np.array(([v,w]))
         #
@@ -143,17 +136,16 @@ class EKF:
 
 
     def propagate_state(self):
-        temp_mat = np.zeros((3, 1))
         if self.control[1] != 0:
             term = self.control[0]/self.control[1]
             #x = self.state_vector[0] - term*np.sin(self.state_vector[2])+ term*np.sin(self.state_vector[2]+self.control[1]*self.dt)
-            temp_mat[0] = self.state_vector[0] - term*np.sin(self.state_vector[2])+ term*np.sin(self.state_vector[2]+self.control[1]*self.dt)
+            self.state_vector[0] = self.state_vector[0] - term*np.sin(self.state_vector[2])+ term*np.sin(self.state_vector[2]+self.control[1]*self.dt)
             #y = self.state_vector[1] + term*np.cos(self.state_vector[2])- term*np.cos(self.state_vector[2]+self.control[1]*self.dt)
-            temp_mat[1] = self.state_vector[1] + term*np.cos(self.state_vector[2])- term*np.cos(self.state_vector[2]+self.control[1]*self.dt)
+            self.state_vector[1] = self.state_vector[1] + term*np.cos(self.state_vector[2])- term*np.cos(self.state_vector[2]+self.control[1]*self.dt)
             #theta = self.state_vector[2] + self.control[1]*self.dt
-            temp_mat[2] = self.state_vector[2] + self.control[1]*self.dt
+            self.state_vector[2] = self.state_vector[2] + self.control[1]*self.dt
             #theta = self.wrap_to_pi(theta)
-            temp_mat[2] = self.wrap_to_pi(self.state_vector[2])
+            self.state_vector[2] = self.wrap_to_pi(self.state_vector[2]) # WORKING
 
         else:
             term = self.control[0]
@@ -162,7 +154,7 @@ class EKF:
             #y = self.state_vector[1] + self.control[0]*np.sin(self.state_vector[2])*self.dt #self.control[0]*self.dt
             self.state_vector[1] = self.state_vector[1] + self.control[0]*np.sin(self.state_vector[2])*self.dt #self.control[0]*self.dt
             #theta = self.wrap_to_pi(self.state_vector[2])
-            self.state_vector[2] = self.wrap_to_pi(self.state_vector[2])
+            self.state_vector[2] = self.wrap_to_pi(self.state_vector[2]) # WORKING
             
         #self.state_vector = np.array([x,y,theta])
         
@@ -195,18 +187,16 @@ class EKF:
         theta = self.state_vector[2]
         term = v/w
         dt = self.dt
-        temp_mat = np.eye(3)
         if np.isclose(w,0):
             # Linear motion model
-            temp_mat[0,:] = np.array([1,0,-dt*v*np.sin(theta)])
-            temp_mat[1,:] = np.array([0,1,dt*v*np.cos(theta)])
-            temp_mat[2,:] = np.array([0,0,1])
+            self.motion_j_state[0,:] = np.array([1,0,-dt*v*np.sin(theta)])
+            self.motion_j_state[1,:] = np.array([0,1,dt*v*np.cos(theta)])
+            self.motion_j_state[2,:] = np.array([0,0,1])
         else:
             # Non-linear motion model
-            temp_mat[0,:] = np.array([1,0,term*(np.cos(theta + dt*w) - np.cos(theta))])
-            temp_mat[1,:] = np.array([0,1,term*(np.sin(theta + dt*w) - np.sin(theta))])
-            temp_mat[2,:] = np.array([0,0,1])
-        self.motion_j_state = np.eye(13)+np.matmul(np.matmul(np.transpose(self.F), temp_mat), self.F)
+            self.motion_j_state[0,:] = np.array([1,0,term*(np.cos(theta + dt*w) - np.cos(theta))])
+            self.motion_j_state[1,:] = np.array([0,1,term*(np.sin(theta + dt*w) - np.sin(theta))])
+            self.motion_j_state[2,:] = np.array([0,0,1])
 
 
     def motion_jacobian_noise_components(self):
@@ -248,14 +238,6 @@ class EKF:
 
     def wrap_to_pi(self,angle):
         return (angle + np.pi) % (2 * np.pi) - np.pi
-        # temp = angle
-        # while (temp > np.pi):
-        #     temp = temp - (np.pi*2)
-        
-        # while (temp < -np.pi):
-        #     temp = temp + (np.pi*2)
-
-        # return temp
 
 
     def save_data_for_analysis(self, msg):
