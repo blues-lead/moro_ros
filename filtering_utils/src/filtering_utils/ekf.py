@@ -107,6 +107,11 @@ class EKF:
         #bearing
         theta = self.wrap_to_pi(euler_from_quaternion([msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w])[2])
         theta = self.process_angle(pos_x, pos_y, theta)
+        #
+        pos_x = pos_x * np.cos(theta) + pos_y * np.sin(theta)
+        pos_y = -pos_x * np.sin(theta) + pos_y * np.cos(theta)
+        rng = np.sqrt(pos_x**2 + pos_y**2)
+        #
         #self.observation_jacobian_state_vector(pos_x, pos_y, msg.ids[0])
         #expected_meas = self.measurement_model(self.state_vector, msg.ids[0])
         mark_angle = self.wrap_to_pi(theta + self.state_vector[2])
@@ -154,10 +159,6 @@ class EKF:
 
 
     def propagate_state(self):
-        #print(self.state_vector)
-        #pdb.set_trace()
-        #beacons = self.state_vector[3:]
-        #temp = np.zeros((3,1))
         if np.isclose(self.control[1],0):
             term = self.control[0]
             #x = self.state_vector[0] + self.control[0]*np.cos(self.state_vector[2])*self.dt #self.control[0]*self.dt
@@ -177,12 +178,6 @@ class EKF:
             self.state_vector[2] = self.state_vector[2] + self.control[1]*self.dt
             #theta = self.wrap_to_pi(theta)
             self.state_vector[2] = self.wrap_to_pi(self.state_vector[2]) # WORKING
-        #self.state_vector = self.state_vector + self.TMatrix.T.dot(temp)
-        #self.state_vector = self.TMatrix.T.dot(temp)
-        #self.state_vector = np.concatenate((temp,self.state_vector[3:]),axis=0)
-        #self.state_vector[2] = self.wrap_to_pi(self.state_vector[2])
-        
-        
 
     def measurement_model(self,state,j):
         px = self.state_vector[2*j+1, 0]
@@ -260,17 +255,14 @@ class EKF:
 
     def observation_jacobian_state_vector(self,x,y,j):
         #pdb.set_trace()
-        Fxj = np.zeros((5, 2 * 5 + 3))
-        Fxj[0:3, 0:3] = np.eye(3)
-        Fxj[0:3, 3:2 * j + 1] = np.zeros((3, 2 * j - 2))
-        Fxj[0:3, 2 * j + 1:2 * j + 3] = np.zeros((3, 2))
-        Fxj[0:3, 2 * j + 3: 2 * 5 + 3] = np.zeros((3, 2 * 5 - 2 * j))
-
-        Fxj[3:5, 0:3] = np.zeros((2, 3))
-        Fxj[3:5, 3:2 * j + 1] = np.zeros((2, 2 * j - 2))
-        Fxj[3:5, 2 * j + 1:2 * j + 3] = np.eye(2)
-        Fxj[3:5, 2 * j + 3: 2 * 5 + 3] = np.zeros((2, 2 * 5 - 2 * j))
-
+        #Fxj = np.zeros((5, 13))
+        first_part = np.zeros((5,3))
+        first_part[0:3,0:3] = np.eye(3)
+        second_part = np.zeros((5,2*j-2))
+        third_part = np.zeros((5,2))
+        third_part[3:, 0:] = np.eye(2)
+        last_part = np.zeros((5, 10 - 2*j))
+        Fxj = np.concatenate((first_part,second_part,third_part,last_part),axis=1)
 
         #pdb.set_trace()
         H = np.zeros((2,5))
@@ -284,22 +276,15 @@ class EKF:
         H[0,:] = np.array([-np.sqrt(qt)*s1, -np.sqrt(qt)*s2, 0, np.sqrt(qt)*s1, np.sqrt(qt)*s2])
         H[1,:] = np.array([s2, -s1, -qt, -s2, s1])
         H = (1/qt)*H
+        #pdb.set_trace()
         self.obs_j_state = H.dot(Fxj)
-
-        '''mx = self.cur_id[0]
-        my = self.cur_id[1]
-        x = self.state_vector[0][0]
-        y = self.state_vector[1][0]
-        a = (x - mx)**2 + (y - my)**2
-        b = np.sqrt(a)
-        self.obs_j_state[0,:] = np.array([(x-mx)/b, (y-my)/b, 0])
-        self.obs_j_state[1,:] = np.array([(my-y)/a, (x-mx)/a, -1])'''
 
     def print_initials(self):
         pass
 
     def wrap_to_pi(self,angle):
         return (angle + np.pi) % (2 * np.pi) - np.pi
+
 
 
     def save_data_for_analysis(self, msg):
