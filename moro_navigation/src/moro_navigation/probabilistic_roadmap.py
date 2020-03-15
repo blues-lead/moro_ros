@@ -1,4 +1,15 @@
-#!/usr/bin/env python
+
+#!
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Mar 12 20:35:20 2020
+
+@author: Anton
+"""
+from utils import DotDict
+import yaml
+#import skimage
+from skimage import io
 from skimage.draw import line, circle
 from copy import copy
 import numpy as np
@@ -38,11 +49,13 @@ class ProbabilisticRoadmap(object):
         self._resolution = og.info.resolution
         self._origin = np.array([og.info.origin.position.x,
                                  og.info.origin.position.y])
+        # xmin, ymin = 0,0
+        # xmax, ymax = 10,10
         self._xmin = self._origin[0]
         self._xmax = self._origin[0] + og.info.width * self._resolution
         self._ymin = self._origin[1]
         self._ymax = self._origin[1] + og.info.height * self._resolution
-
+        # _og_map 200x200
         self._og_map = np.array(og.data).reshape((og.info.height,
                                                   og.info.width))
 
@@ -51,6 +64,7 @@ class ProbabilisticRoadmap(object):
 
         # Create the graph. This fills out self.nodes and self.graph
         self.create_graph()
+        np.random.seed()
 
     def _figure_coordinates(self, position):
         """Get map figure coordinates for a position.
@@ -64,7 +78,9 @@ class ProbabilisticRoadmap(object):
                 as position.
         """
         position = np.array(position)
+        
         scaled = np.atleast_2d((position - self._origin) / self._resolution)
+        # flip array in left-right direction
         return np.fliplr(scaled).astype(np.uint16).reshape(position.shape)
 
     def _is_free(self, position):
@@ -90,9 +106,20 @@ class ProbabilisticRoadmap(object):
         Returns:
             ndarray: Inflated occupancy grid. Same size as og.
         """
-        # TODO
-        og = copy(og)
-        return og
+        new_map = copy(og)
+        #new_map = np.zeros((200,200), dtype=np.uint8)
+        shape = og.shape
+        #print(shape)
+        new_radius = radius / self._resolution
+        
+        obstacles = np.nonzero(og == OCCUPIED)
+        for i in range(np.size(obstacles[0])):
+            x = obstacles[0][i]
+            y = obstacles[1][i]
+            rr,cc = circle(x,y,new_radius, shape)
+            new_map[rr,cc] = OCCUPIED
+        #print(new_map)
+        return new_map
 
     def _draw_sample(self):
         """Draw a random sample from the configuration space
@@ -101,10 +128,10 @@ class ProbabilisticRoadmap(object):
             ndarray: Sampled coordinates, size (2,).
         """
         # TODO
-        sample = None
+        sample = np.random.random_sample(2)*10
         return sample
 
-    def can_connect(self, a, b):
+    def can_connect(self, p1, p2):
         """Check whether the connecting line segment between two points
         is unobstructed.
 
@@ -116,16 +143,70 @@ class ProbabilisticRoadmap(object):
             bool: Returns True if there are no obstacles between the points.
         """
         # TODO
-        return False
+        dxy = p2 - p1
+        #print(dxy)
+        if np.isclose(dxy[0],0): # if kx+b doesn't perform
+            x = p2[0]
+            points_to_check = np.zeros((int(dxy[1]*10+2), 2))
+            points_to_check[:,1] = np.linspace(p1[1], p2[1], int(dxy[1]*10)+2)
+            points_to_check[:,0] = x
+        else:
+            rate = dxy[1]/dxy[0]
+            b = p1[1] - rate*p1[0]
+            rng = np.linalg.norm(dxy)
+            x = np.linspace(p1[0], p2[0], int(rng*10)+2)
+            y = rate*x + b
+            points_to_check = np.zeros((int(rng*10)+2, 2))
+            points_to_check[:,0] = x
+            points_to_check[:,1] = y
+        for point in points_to_check:
+            if self._is_free(point) == False:
+                return False
+        return True
+
 
     def create_graph(self):
         """Create the nodes and connections in the graph. Fills out the class
         attributes self.nodes and self.graph with the corresponding values.
         """
-        # TODO
-        # Save the results to the class attributes
-        self.nodes = None
-        self.graph = None
+        np.random.seed()
+        amount = 80
+        closeness_threshold = 0.8
+        i = 0
+        self.nodes = np.zeros((amount, 2))
+        self.graph = np.zeros((amount, amount))
+        while i < amount:
+            sample = self._draw_sample()
+            if self._is_close(sample, closeness_threshold) == True or not self._is_free(sample):
+                continue
+            else:
+                self.nodes[i,:] = sample.T
+                i += 1
+        # TEST
+        for i in range(self.nodes.shape[0]):
+            for j in range(self.nodes.shape[0]):
+                node1,node2 = self.nodes[i], self.nodes[j]
+                if self.can_connect(node1,node2):
+                    if i==j:
+                        self.graph[i,j] = 0.1
+                    else:
+                        if sum(self.graph[i] > 4):
+                            continue
+                        length = np.linalg.norm(node2-node1)
+                        self.graph[i,j] = length
+                        self.graph[j,i] = length
+        #print(self.graph)      
+                
+        # TEST
+        
+    def _is_close(self,p, threshold):
+       test = sum([np.linalg.norm(p - t) <= threshold for t in self.nodes])
+       #print(test)
+       if test == 0:
+           return False
+       else:
+           return True
+       
 
     def plot(self, path=None):
         """Plot the map, nodes and connections of the ProbabilisticRoadmap
@@ -138,8 +219,8 @@ class ProbabilisticRoadmap(object):
         ax.imshow(self._og_map, cmap='Greys', origin='lower', extent=extent)
         ax.imshow(self._map, cmap='Reds', origin='lower',
                   extent=extent, alpha=0.3)
-
         ax.plot(self.nodes[:, 0], self.nodes[:, 1], 'bo')
+        
 
         source, sink = np.nonzero(self.graph)
         source = self.nodes[source]
@@ -150,7 +231,7 @@ class ProbabilisticRoadmap(object):
 
         ax.set_xlim((self._xmin, self._xmax))
         ax.set_ylim((self._ymin, self._ymax))
-
+#
         if path:
             path = self.nodes[path]
             ax.plot(path[:, 0], path[:, 1], 'ro-', linewidth=2)
