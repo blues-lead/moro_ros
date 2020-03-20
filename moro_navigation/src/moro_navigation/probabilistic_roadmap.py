@@ -218,6 +218,10 @@ class ProbabilisticRoadmap(object):
                             linewidths=[1], colors=[(0, 0.75, 1, 1)])
         ax.add_collection(lc)
 
+        for i in range(len(self.nodes)):
+            x,y = self.nodes[i,0], self.nodes[i,1]
+            plt.text(x,y,str(i+1))
+
         ax.set_xlim((self._xmin, self._xmax))
         ax.set_ylim((self._ymin, self._ymax))
 #
