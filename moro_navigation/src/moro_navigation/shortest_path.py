@@ -52,5 +52,23 @@ def dynamic_programming(graph, start, goal):
     Returns:
         deque: Indices of nodes along the shortest path
     """
-    # TODO
-    return deque()
+    distances = np.full((graph.shape[0],1), fill_value=float("Inf"))
+    predcs = np.zeros((graph.shape[0],1))
+    distances[start] = 0
+    for i in range(len(graph)): # performing 18 times
+        for row in range(len(graph)-1):
+            successors = np.nonzero(graph[row,:])[0]
+            for node in successors:#get_successors(row, ad_matrix):
+                #breakpoint()
+                if distances[row] != float("Inf") and distances[row] + graph[row, node] < distances[node]:
+                    distances[node] = distances[row] + graph[row,node]
+                    predcs[node] = row
+    path = [goal]
+    while goal != start:
+        #breakpoint()
+        van = predcs[int(goal)][0]
+        path.append(int(van))
+        goal = van
+    path = np.array(path)
+    return path[::-1]
+    #return deque()

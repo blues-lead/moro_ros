@@ -161,7 +161,8 @@ class ProbabilisticRoadmap(object):
         """Create the nodes and connections in the graph. Fills out the class
         attributes self.nodes and self.graph with the corresponding values.
         """
-        np.random.seed()
+        # FIXME do something with seed
+        np.random.seed(4)
         amount = 80
         closeness_threshold = 0.8
         i = 0
@@ -197,7 +198,7 @@ class ProbabilisticRoadmap(object):
            return True
        
 
-    def plot(self, path=None):
+    def plot(self, path=[]): # path = None
         """Plot the map, nodes and connections of the ProbabilisticRoadmap
 
         Args:
@@ -220,11 +221,11 @@ class ProbabilisticRoadmap(object):
 
         for i in range(len(self.nodes)):
             x,y = self.nodes[i,0], self.nodes[i,1]
-            plt.text(x,y,str(i+1))
+            plt.text(x,y,str(i))
 
         ax.set_xlim((self._xmin, self._xmax))
         ax.set_ylim((self._ymin, self._ymax))
 #
-        if path:
+        if len(path) > 0: # if path:
             path = self.nodes[path]
             ax.plot(path[:, 0], path[:, 1], 'ro-', linewidth=2)
