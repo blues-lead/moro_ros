@@ -59,8 +59,30 @@ def astar(graph, start, goal, heuristic):
     Returns:
         deque: Indices of nodes along the shortest path
     """
-    # TODO
-    return deque()
+    graph = Graph(graph)
+    frontier = PriorityQueue()
+    frontier.push(start,0)
+    cost_so_far = {}
+    cost_so_far[start] = 0
+    path = {}
+    path[start] = None
+    while not frontier.isempty():
+        cur_id = frontier.pop()
+        if graph.isGoalState(cur_id,goal):
+            break
+        for node in graph.get_successors(cur_id[0]):
+            new_cost = cost_so_far[cur_id[0]] + node[1]
+            if node[0] not in cost_so_far or new_cost < cost_so_far[node[0]]:
+                cost_so_far[node[0]] = new_cost
+                priority = new_cost + heuristic(node[0], goal)
+                frontier.push(node[0],priority)
+                path[node[0]] = cur_id[0]
+    sequence = []
+    while goal in path.keys():
+        sequence.append(goal)
+        goal = path[goal]
+    return sequence[::-1]
+    #return deque()
 
 
 def dynamic_programming(graph, start, goal):

@@ -64,6 +64,9 @@ class ProbabilisticRoadmap(object):
         self.create_graph()
         np.random.seed()
 
+    def heuristic_function(self, node1, node2):
+        return np.linalg.norm(self.nodes[node1] - self.nodes[node2])
+
     def _figure_coordinates(self, position):
         """Get map figure coordinates for a position.
 
