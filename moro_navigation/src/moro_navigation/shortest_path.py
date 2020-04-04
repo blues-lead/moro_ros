@@ -98,6 +98,7 @@ def dynamic_programming(graph, start, goal):
     Returns:
         deque: Indices of nodes along the shortest path
     """
+    # TODO IF COSTS ARE ALREADY CALCULATED THEN RETURN THEM
     distances = np.full((graph.shape[0],1), fill_value=float("Inf"))
     predcs = np.zeros((graph.shape[0],1))
     distances[start] = 0

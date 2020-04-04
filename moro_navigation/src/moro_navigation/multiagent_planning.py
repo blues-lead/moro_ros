@@ -16,10 +16,24 @@ def time_expand(graph, nodes, obstruction):
         tuple: The time-expanded graph, size (tn,tn), and node
             coordinates in the new graph, size(tn,2)
     """
-    # TODO
-    expanded_graph = nodes = None
-
-    return expanded_graph, nodes
+    time_steps = len(obstruction)
+    exp_size = len(nodes)
+    new_size = (time_steps+1)*exp_size
+    expanded_graph = np.zeros((new_size,new_size))
+    
+    for i in range(time_steps):
+        new_graph = np.copy(graph)
+        tc = i*exp_size
+        bc = tc + exp_size
+        node_at_time_step = obstruction[i]
+        new_graph[:,node_at_time_step] = 0 # remove "to"-columns from the graph
+        new_graph[node_at_time_step,:] = 0 # remove "from"-rows from the graph
+        expanded_graph[tc:bc, bc:bc+exp_size] = new_graph # Fill upper subdiagonal with A:s
+    # Fill bottom-right corner of the expanded graph with the A
+    # here the obstruction stops moving
+    expanded_graph[new_size - exp_size:new_size,new_size - exp_size:new_size] = new_graph
+    new_nodes = np.tile(nodes, ((time_steps+1),1))
+    return expanded_graph, new_nodes
 
 
 def joint_graph(graph, nodes):

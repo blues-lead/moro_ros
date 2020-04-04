@@ -115,7 +115,7 @@ class ProbabilisticRoadmap(object):
         for i in range(np.size(obstacles[0])):
             x = obstacles[0][i]
             y = obstacles[1][i]
-            rr,cc = circle(x,y,new_radius, shape)
+            rr,cc = circle(int(x),int(y),int(new_radius), shape)
             new_map[rr,cc] = OCCUPIED
         return new_map
 
