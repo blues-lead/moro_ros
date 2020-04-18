@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import numpy as np
 from quadprog import solve_qp
+from math import sqrt
 
 
 def smooth_path(path, num_steps=50, weight=1e-5, max_vel=0.5, max_acc=1.):
@@ -69,13 +70,13 @@ def smooth_path(path, num_steps=50, weight=1e-5, max_vel=0.5, max_acc=1.):
     # but i gues it expects constraint to be equal to zero
     # TODO: set global constraints (start and end nodes)
     # Position at start must be same as path start
-    C[0,0] = 1; C[0,1] = 1; C[0,2] = 1; C[0,3] = 1; C[0,4] = 1
+    C[0,0] = 1; C[0,1] = 0; C[0,2] = 0; C[0,3] = 0; C[0,4] = 0
     b[0] = path[0]
     # Position at end must be the same as last path node position
     C[1,-5] = 1; C[1,-4] = 1; C[1,-3] = 1; C[1,-2] = 1; C[1,-1] = 1
     b[1] = path[-1]
     # Velocity at start must be zero
-    C[2,1] = 1; C[2,2] = 2; C[2,3] = 3; C[2,4] = 4
+    C[2,1] = 1; C[2,2] = 0; C[2,3] = 0; C[2,4] = 0
     b[2] = 0
     # Velocity at end must be zero
     C[3,-4] = 1; C[3,-3] = 2; C[3,-2] = 3; C[3,-1] = 4
@@ -84,14 +85,18 @@ def smooth_path(path, num_steps=50, weight=1e-5, max_vel=0.5, max_acc=1.):
     # TODO: Assert smooth transition between line segments
     for i in range(0,num_segments-1):
         # For end of each node Pos, vel, and acc must be the same as the start of next node
+
+        # Pos
         C[i*3+4, 5*i] = 1; C[i*3+4, 5*i+1] = 1; C[i*3+4, 5*i+2] = 1; C[i*3+4, 5*i+3] = 1; C[i*3+4, 5*i+4] = 1
-        C[i*3+4, 5*i+5] = -1; C[i*3+4, 5*i+6] = -1; C[i*3+4, 5*i+7] = -1; C[i*3+4, 5*i+8] = -1; C[i*3+4, 5*i+9] = -1
+        C[i*3+4, 5*i+5] = -1; C[i*3+4, 5*i+6] = 0; C[i*3+4, 5*i+7] = 0; C[i*3+4, 5*i+8] = 0; C[i*3+4, 5*i+9] = 0
 
+        # Vel
         C[i*3+4+1, 5*i+1] = 1; C[i*3+4+1, 5*i+2] = 2; C[i*3+4+1, 5*i+3] = 3; C[i*3+4+1, 5*i+4] = 4
-        C[i*3+4+1, 5*i+6] = -1; C[i*3+4+1, 5*i+7] = -2; C[i*3+4+1, 5*i+8] = -3; C[i*3+4+1, 5*i+9] = -4
+        C[i*3+4+1, 5*i+6] = -1; C[i*3+4+1, 5*i+7] = 0; C[i*3+4+1, 5*i+8] = 0; C[i*3+4+1, 5*i+9] = 0
 
+        # Acc
         C[i*3+4+2, 5*i+2] = 2; C[i*3+4+2, 5*i+3] = 6; C[i*3+4+2, 5*i+4] = 12
-        C[i*3+4+2, 5*i+7] = -2; C[i*3+4+2, 5*i+8] = -6; C[i*3+4+2, 5*i+9] = -12
+        C[i*3+4+2, 5*i+7] = -2; C[i*3+4+2, 5*i+8] = 0; C[i*3+4+2, 5*i+9] = 0
 
     # Solve the polynomial coefficients using quadratic programming
     poly_coef = np.zeros((num_params, 2))
@@ -137,7 +142,7 @@ def smooth_path(path, num_steps=50, weight=1e-5, max_vel=0.5, max_acc=1.):
 
     vel = scaling_factor*vel
     acc = scaling_factor**2*acc
-    jerk = scaling_factor**3*jerk*2
+    jerk = scaling_factor**3*jerk
     time = time/scaling_factor
 
     # Time scaling for constraint on maximum acceleration
@@ -151,10 +156,10 @@ def smooth_path(path, num_steps=50, weight=1e-5, max_vel=0.5, max_acc=1.):
     scaling_factor = max_acc/max(abs_acc)
     # only scale down
     if scaling_factor < 1:
-        vel = scaling_factor*vel
-        acc = scaling_factor**2*acc
-        jerk = scaling_factor**3*jerk*2
-        time = time/scaling_factor
+        vel = sqrt(scaling_factor)*vel
+        acc = scaling_factor*acc
+        jerk = sqrt(scaling_factor)*scaling_factor*jerk
+        time = time/sqrt(scaling_factor)
 
 
     return pos, vel, acc, jerk, time
