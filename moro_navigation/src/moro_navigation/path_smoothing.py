@@ -24,9 +24,9 @@ def smooth_path(path, num_steps=50, weight=1e-5, max_vel=0.5, max_acc=1.):
     """
     # Form the variable vectors for a 4th order polynomial as a function of s,
     P = lambda s: np.array([[ 1,    s,      s**2,   s**3,   s**4 ]])  # position
-    V = lambda s: np.array([[ 0,    1,      2*s,    3*s**3, 4*s**3 ]])  # velocity
+    V = lambda s: np.array([[ 0,    1,      2*s,    3*s**2, 4*s**3 ]])  # velocity
     A = lambda s: np.array([[ 0,    0,      2,      6*s,    12*s**2  ]])  # acceleration
-    J = lambda s: np.array([[ 0,    0,      0,      6,      12*s  ]])  # jerk
+    J = lambda s: np.array([[ 0,    0,      0,      6,      24*s  ]])  # jerk
 
     # ... where s in the range [0,1]
     s = np.linspace(0, 1, num_steps)
@@ -36,7 +36,7 @@ def smooth_path(path, num_steps=50, weight=1e-5, max_vel=0.5, max_acc=1.):
 
     # The desired position on a line segment for any s is given by the line
     # equation
-    pos_desired = lambda seg, s: (1-s)*seg+s*seg
+    pos_desired = lambda seg, s: (1-s)*path[seg,:]+s*path[seg+1,:]
 
     # The parameters to optimize are the coefficients of the polynomials for
     # the different line segments
@@ -66,9 +66,6 @@ def smooth_path(path, num_steps=50, weight=1e-5, max_vel=0.5, max_acc=1.):
     C = np.zeros((num_constraints, num_params))
     b = np.zeros((num_constraints, 2))
 
-    # no clue how the solve_qp expects these values
-    # but i gues it expects constraint to be equal to zero
-    # TODO: set global constraints (start and end nodes)
     # Position at start must be same as path start
     C[0,0] = 1; C[0,1] = 0; C[0,2] = 0; C[0,3] = 0; C[0,4] = 0
     b[0] = path[0]
@@ -155,7 +152,7 @@ def smooth_path(path, num_steps=50, weight=1e-5, max_vel=0.5, max_acc=1.):
 
     scaling_factor = max_acc/max(abs_acc)
     # only scale down
-    if scaling_factor < 1:
+    if scaling_factor > 1:
         vel = sqrt(scaling_factor)*vel
         acc = scaling_factor*acc
         jerk = sqrt(scaling_factor)*scaling_factor*jerk
