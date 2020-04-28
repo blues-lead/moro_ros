@@ -141,8 +141,8 @@ class PathFollower(object):
         idx = self._get_nearest(pose)
         vel = np.linalg.norm(self._vel[idx])
 
-        a = -1
-        b = -50
+        a = -0.3
+        b = -0.3
         k2 = a*b
         k3 = -(a*b)
         ss = np.array(((0,vel),(-k2,-k3)))
