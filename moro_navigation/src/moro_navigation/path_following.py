@@ -141,8 +141,8 @@ class PathFollower(object):
         idx = self._get_nearest(pose)
         vel = np.linalg.norm(self._vel[idx])
 
-        a = -2
-        b = -2
+        a = -1
+        b = -50
         k2 = a*b
         k3 = -(a*b)
         ss = np.array(((0,vel),(-k2,-k3)))
@@ -154,7 +154,7 @@ class PathFollower(object):
         e = np.matmul(self._get_transform(idx), np.array((xe,ye,oe)))[1:3]
 
         u = np.matmul(ss,e)
-        linear = u[0]
+        linear = vel
         angular = u[1]
 
         return linear, angular

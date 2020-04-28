@@ -6,7 +6,7 @@ import tf
 from tf.transformations import euler_from_quaternion
 from moro_navigation import PathFollower
 from moro_navigation_msgs.srv import PlanPath
-from move_base_msgs.msg import MoveBaseAction, MoveBaseFeedback
+from move_base_msgs.msg import MoveBaseAction, MoveBaseFeedback, MoveBaseGoal
 from geometry_msgs.msg import (
     Point, Quaternion, Twist, PoseStamped, Pose, Vector3)
 from std_msgs.msg import Header
@@ -44,6 +44,7 @@ class MoroNavigator(object):
     Transforms:
         Needs transform from /map to /base_link.
     """
+
     def __init__(self, name):
         """Initialize the MoroNavigator
 
@@ -80,6 +81,12 @@ class MoroNavigator(object):
                                                     auto_start=False)
         self._server.start()
 
+        # Make an action client and subscriber for a simple goal from e.g. RViz
+        self._client = actionlib.SimpleActionClient(self._name, MoveBaseAction)
+        self._client.wait_for_server()
+        self._sub = rospy.Subscriber('simple_goal', PoseStamped,
+                                     self.callback)
+
     def _get_pose(self, t):
         """Get the pose of /base_link in /map frame.
 
@@ -89,6 +96,14 @@ class MoroNavigator(object):
         self._tf.waitForTransform("/map", "/base_link",
                                   t, self._rate.sleep_dur/2)
         return self._tf.lookupTransform("/map", "/base_link", t)
+
+    def callback(self, pose):
+        """Callback for a simple goal. Calls the action server
+
+        Args:
+            pose (geometry_msgs/PoseStamped): The goal location.
+        """
+        self._client.send_goal(MoveBaseGoal(target_pose=pose))
 
     def execute(self, goal):
         """The control loop to execute whenever a new goal is available.
@@ -144,6 +159,7 @@ class MoroNavigator(object):
             linear, angular = follower.get_control(
                 np.append(position[:2], yaw))
 
+            rospy.loginfo(linear)
             # Publish the control message to the mobile base
             self._pub.publish(Vector3(x=linear), Vector3(z=angular))
 

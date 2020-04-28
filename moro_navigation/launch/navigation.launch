@@ -1,4 +1,5 @@
 <launch>
+  <param name="/use_sim_time" value="true" />
   <include file="$(find moro_simulator)/launch/simulation.launch" />
 
   <!-- Launch planner node -->
@@ -9,6 +10,7 @@
     <param name="control_rate" value="20" />
     <param name="goal_threshold" value="0.2" />
     <remap from="cmd_vel" to="cmd_vel" />
+    <remap from="simple_goal" to="/move_base_simple/goal" />
   </node>
 
 </launch>
