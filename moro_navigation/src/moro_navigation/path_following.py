@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import numpy as np
 from utils import decompose, distance, wrap_to_pi
-
+from path_smoothing import smooth_path
 
 class PathFollower(object):
     """Implements path following using feedback control.
@@ -37,7 +37,25 @@ class PathFollower(object):
         """
         try:
             # TODO
-            curvature = None
+            x = self._vel[idx][0]
+            y = self._vel[idx][1]
+            a = np.sqrt(x**2+y**2)
+            d = np.array((x/a, y/a)).T
+            n = np.array((-y/a, x/a)).T
+
+            x_n = self._vel[idx+1][0]
+            y_n = self._vel[idx+1][1]
+            a_n = np.sqrt(x_n**2+y_n**2).T
+            d_n = np.array((x_n/a_n, y_n/a_n)).T
+
+            time = self._time[idx]
+            if  time == 0:
+                time = 0.001
+
+            d_dot = (d_n-d)/time
+
+            curvature = np.dot(d_dot,n)/a
+
             return curvature
         except IndexError:
             return 0.
@@ -77,7 +95,11 @@ class PathFollower(object):
             ndarray: The desired pose at the given index
         """
         # TODO
-        return None
+        x,y = self._pos[idx]
+        vx,vy = self._vel[idx]
+        o = np.arctan(vy/vx)
+
+        return np.array((x,y,o))
 
     def _get_transform(self, idx):
         """Get a matrix to transform the error into the coordinate system of
@@ -115,6 +137,44 @@ class PathFollower(object):
             tuple: Linear and angular velocity
         """
         # TODO
-        linear = angular = None
+        # linear = angular = None
+        idx = self._get_nearest(pose)
+        vel = np.linalg.norm(self._vel[idx])
+
+        a = -2
+        b = -2
+        k2 = a*b
+        k3 = -(a*b)
+        ss = np.array(((0,vel),(-k2,-k3)))
+
+        _, y_h, o_h = self._get_desired_pose(idx)
+        xe = 0
+        ye = pose[1] - y_h
+        oe = pose[2] - o_h
+        e = np.matmul(self._get_transform(idx), np.array((xe,ye,oe)))[1:3]
+
+        u = np.matmul(ss,e)
+        linear = u[0]
+        angular = u[1]
 
         return linear, angular
+
+if __name__ == "__main__":
+    p = np.array([[4.26271167, 1.90129996],
+        [6.97728825, 2.16089496],
+        [5.94148132, 0.3774518],
+        [4.35734741, 0.57725099],
+        [2.79453604, 1.22789253],
+        [3.28322137, 3.22574976],
+        [4.28552018, 2.78609033],
+        [7.33380168, 4.0844386],
+        [9.07464646, 1.85209234],
+        [9.4966894, 7.2826944],
+        [9.35290857, 9.19987348],
+        [5.27908823, 9.37571584],
+        [7.32593449, 8.94651292]])
+
+    sp = smooth_path(p)
+
+    Pf = PathFollower(sp[0],sp[1],sp[4],0.2)
+    Pf.get_control((0,0,0))
