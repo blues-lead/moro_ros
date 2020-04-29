@@ -159,7 +159,7 @@ class MoroNavigator(object):
             linear, angular = follower.get_control(
                 np.append(position[:2], yaw))
 
-            rospy.loginfo(linear)
+            rospy.loginfo([linear, angular])
             # Publish the control message to the mobile base
             self._pub.publish(Vector3(x=linear), Vector3(z=angular))
 

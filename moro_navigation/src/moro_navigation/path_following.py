@@ -141,21 +141,26 @@ class PathFollower(object):
         idx = self._get_nearest(pose)
         vel = np.linalg.norm(self._vel[idx])
 
-        a = -0.3
-        b = -0.3
+        a = -1.5
+        b = -1.5
+
+        k1 = 0
         k2 = a*b
         k3 = -(a*b)
-        ss = np.array(((0,vel),(-k2,-k3)))
 
         _, y_h, o_h = self._get_desired_pose(idx)
         xe = 0
         ye = pose[1] - y_h
         oe = pose[2] - o_h
-        e = np.matmul(self._get_transform(idx), np.array((xe,ye,oe)))[1:3]
+        e = np.matmul(self._get_transform(idx), np.array((xe,ye,oe)))
+        c = self._get_curvature(idx)
+        w1 = (-k2*ye-k3*oe)*vel
 
-        u = np.matmul(ss,e)
+        ss = np.array(((-k1, vel*c, 0),(-vel*c, 0, vel),(0, 0, 0)))
+        error_dynamics = np.matmul(ss,e)+np.array((0,0,1))*w1
+
         linear = vel
-        angular = u[1]
+        angular = error_dynamics[2]
 
         return linear, angular
 

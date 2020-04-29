@@ -1,0 +1,42 @@
+Path following
+
+The path following algorithm is implemented as follows.
+First we find the curvature for each index. This is done with help of the excercise material equation and simply implemented to python
+
+curvature for index:
+```
+    x = self._vel[idx][0]
+    y = self._vel[idx][1]
+    a = np.sqrt(x**2+y**2)
+    d = np.array((x/a, y/a)).T
+    n = np.array((-y/a, x/a)).T
+
+    x_n = self._vel[idx+1][0]
+    y_n = self._vel[idx+1][1]
+    a_n = np.sqrt(x_n**2+y_n**2).T
+    d_n = np.array((x_n/a_n, y_n/a_n)).T
+
+    time = self._time[idx]
+    if  time == 0:
+        time = 0.001
+
+    d_dot = (d_n-d)/time
+
+    curvature = np.dot(d_dot,n)/a
+```
+
+We find the velocity components for this and next step of the given index, and calculate norm and angle for both.
+and normal of velocity of current step. After that we can calculate the curvature with equation (26)
+
+After that we follow the implementation guideline from the lecture slides and we find that in the get_control
+function, we have the pose q coming as parameter. Using the helper functions we first find the nearest index of the path
+with the ready made _get_nearest() method.
+
+After that we get the desired pose by finding the path coordinates of the index and calculate the heading with arctan(velocity_x/velocity_y)
+Now according to the lecture slides we have robot pose q as pose and desired as y hat (y_h) omega hat (o_h). We assume that error x is 0 so we assign any values for x hat
+
+Now the next step is to calculate the error vector which is the product of transformation matrix and difference of actual and desired pose.
+omega 1 which is the control signal is given by (-k2*ye-k3*oe) where k2 and k3 come from pole placing and ye and oe are error components from above
+k2 and k3 are defined as k2 = a*b, and k3 = -(a+b) where a and b are the poles of the system. We assign poles randomly to -1.5 and -1.5 so they
+are on the left side of the real number axis and thus have a chance of being stable. We don't assign too large (absolute) values to prevent
+overshooting the target control and thus reducing oscillation.
